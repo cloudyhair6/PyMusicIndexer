@@ -139,7 +139,6 @@ def generate_sample_library(base_dir: str = "sample_music_library"):
     with open(os.path.join(pop_dir, "lyrics.pdf"), "wb") as f:
         f.write(b"%PDF-1.4 Mock lyrics document")
 
-    print(f"[+] Sample library generated at: {os.path.abspath(base_dir)}")
     return base_dir
 
 
@@ -147,4 +146,5 @@ if __name__ == "__main__":
     import sys
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    generate_sample_library()
+    out_dir = generate_sample_library()
+    print(f"[+] Sample library generated at: {os.path.abspath(out_dir)}")

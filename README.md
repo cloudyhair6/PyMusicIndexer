@@ -6,15 +6,24 @@ Engineered with a **Smart Incremental HDD Refresh Engine** that prevents unneces
 
 ---
 
-## What's New in v1.1
+## What's New in v1.2
 
 - ⚡ **Smart Refresh Engine (Slow HDD Optimized)**: Remembers previous scan results and uses ultra-fast filesystem timestamp comparisons (`os.scandir` without opening audio files). Unchanged tracks are loaded from the JSON cache in milliseconds with **zero disk reads**, indexing *only* new or modified files.
-- 🔍 **LibVLC Fingerprinting & Media Parsing**: Automatically parses incomplete tracks (missing artwork, missing artist, missing title, or missing album) using system LibVLC (`libvlc.dll`) to enrich missing fields and detect album covers.
-- 📑 **Multi-Page GUI Interface**:
-  - **Tab 1: 🎵 All Songs**: Full searchable catalog with metadata columns and instant playback.
-  - **Tab 2: ⚠️ Incomplete Metadata**: Surfaces tracks missing album covers or tags, displays VLC fingerprinting status, and offers a live "⚡ Fingerprint with VLC" button.
-  - **Tab 3: ❌ Unindexed & Failed Files**: Displays non-audio files (txt, jpg, pdf) and corrupted audio files with clear explanations of why they were skipped, plus right-click to open in File Explorer.
-- 💾 **Folder Memory & Persistent JSON Store**: Remembers configured target folders on startup so you don't have to re-enter them each time.
+- 📋 **Extended Windows Details Properties**: Extracts and inspects the full suite of Windows Explorer details:
+  - **Description**: Title, Subtitle, Star Rating (1–5 Stars ★), Comments
+  - **Media**: Contributing Artists, Album Artist, Album, Year, Track #, Disc # (Part of Set), Genre, Duration
+  - **Origin**: Publisher, Encoded By, Author URL, Copyright
+  - **Content**: Composer, Conductor, Group Description (Grouping), Mood, Initial Key, Beats-Per-Minute (BPM), Part of a Compilation
+  - **Technical**: Format, Bitrate (kbps), Sample Rate (Hz), Bits per sample, Channels, File Size
+- 🖼️ **Direct Web Artwork Links in JSON**:
+  - `album_art_web_url`: Direct `.jpg` image file link from Apple iTunes CDN, Deezer CDN, or Cover Art Archive (never a search results page).
+  - `album_art_html_link`: Clickable HTML link (`<a href="..." target="_blank" download="cover.jpg">...</a>`) embedded in the JSON so browsers, web apps, or scripts can download the cover photo directly without extracting from audio files.
+  - Auto-caching: Resolved image URLs are persistently cached in `album_art_urls.json`.
+- 💾 **Direct Audio File Tag & Cover Art Embedder**: An optional tool to write extended tags and embed front cover artwork (ID3v2.3 `APIC` for MP3, RIFF INFO for WAV, Vorbis picture blocks for FLAC) directly into physical audio files on disk.
+- 🔍 **LibVLC Fingerprinting & Media Parsing**: Automatically identifies incomplete tracks and enriches missing metadata via LibVLC (`libvlc.dll`).
+- ℹ️ **Extended Details Inspector Dialog**: Right-click any track in the GUI to view a comprehensive properties dialog with one-click buttons to open the web artwork in your browser or copy links.
+- 🚀 **Fast Launch Option**: When starting in CMD, press `[G]` to skip scanning and launch the GUI music player immediately with your current catalog.
+- 📁 **Smart Folder Sync**: Intelligently verifies saved directories against actual song file paths, automatically correcting any outdated or mismatching folder paths.
 
 ---
 
@@ -24,20 +33,25 @@ Engineered with a **Smart Incremental HDD Refresh Engine** that prevents unneces
 python media scanning/
 │
 ├── media_scanner/
-│   ├── __init__.py           # Package exports & public API
-│   ├── metadata.py           # Universal tag extraction, artwork & LibVLC enrichment
-│   ├── scanner.py            # Recursive crawler & Smart HDD refresh engine
-│   ├── storage.py            # Dual JSON persistence & cache manager
+│   ├── __init__.py           # Clean package exports & public API
+│   ├── metadata.py           # Universal tag extraction, Windows Details & pure-Python parsers
+│   ├── scanner.py            # Recursive crawler & Smart HDD incremental engine
+│   ├── artwork.py            # Cover art discovery, Apple/Deezer CDN links & caching
+│   ├── writer.py             # Physical file tag & cover art embedder (MP3, WAV, FLAC)
+│   ├── storage.py            # Dual JSON persistence, folder sync & catalog manager
 │   ├── player.py             # LibVLC and QtAudioPlayer abstraction layers
-│   ├── gui.py                # Multi-tab PyQt6 GUI player and inspector
+│   ├── gui.py                # Multi-tab PyQt6 GUI player, workers & inspector dialog
 │   └── cli.py                # Command-line interface with dynamic progress bar
 │
-├── main.py                   # Main executable CLI entrypoint
+├── main.py                   # Main executable CLI and GUI launcher
 ├── sample_data_gen.py        # Mock audio library generator for testing
-├── requirements.txt          # Package requirements
+├── requirements.txt          # Minimal dependencies (PyQt6)
 ├── tests/
-│   └── test_scanner.py       # Unit & integration test suite
-└── README.md                 # Documentation
+│   ├── test_scanner.py       # Core scanner, player & enrichment tests
+│   └── test_extended_details.py # Extended metadata, web art & tag writer tests
+├── .gitignore                # Configured for GitHub publication
+├── LICENSE                   # MIT License
+└── README.md                 # Complete documentation
 ```
 
 ---

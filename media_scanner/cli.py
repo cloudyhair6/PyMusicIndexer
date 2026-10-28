@@ -66,25 +66,42 @@ def render_progress_bar(current: int, total: int, current_filename: str, bar_len
     sys.stdout.flush()
 
 
-def prompt_folder_selection(remembered_folders: Optional[List[str]] = None) -> List[str]:
+def prompt_folder_selection(
+    remembered_folders: Optional[List[str]] = None,
+    allow_skip_to_gui: bool = False
+) -> Tuple[List[str], bool]:
     """
     Interactive terminal prompt allowing the user to select one or multiple folders,
     with smart recall of previously scanned directories.
+    Returns (selected_folders, skip_scan_launch_gui).
     """
     print("\n" + "=" * 65)
     print("           AUDIO DIRECTORY SELECTION (CMD INTERFACE)           ")
     print("=" * 65)
 
     if remembered_folders:
-        print("Previous folders were found in the library cache:")
-        for idx, f in enumerate(remembered_folders, 1):
-            print(f"  [{idx}] {f}")
-        print("-" * 65)
-        choice = input("Use these folders for a Smart Refresh? [Y/n]: ").strip().lower()
-        if choice in ("", "y", "yes"):
-            valid = [f for f in remembered_folders if os.path.isdir(f)]
-            if valid:
-                return valid
+        valid_remembered = [f for f in remembered_folders if os.path.isdir(f)]
+        if valid_remembered:
+            print("Previous music directory found in library catalog:")
+            for idx, f in enumerate(valid_remembered, 1):
+                try:
+                    count = len(os.listdir(f))
+                    info = f"({count} items in folder)"
+                except Exception:
+                    info = ""
+                print(f"  [{idx}] {f} {info}")
+            print("-" * 65)
+            print("Options:")
+            print("  [Y] Smart Refresh these folders (detects new/modified tracks)")
+            if allow_skip_to_gui:
+                print("  [G] Skip scan and open GUI Music Player directly")
+            print("  [C] Choose different / additional folders")
+            print("-" * 65)
+            choice = input(f"Select an option [{'Y/g/c' if allow_skip_to_gui else 'Y/c'}] (default: Y): ").strip().lower()
+            if choice in ("", "y", "yes"):
+                return valid_remembered, False
+            elif allow_skip_to_gui and choice in ("g", "gui", "play"):
+                return valid_remembered, True
 
     print("Enter the full path to each folder you want to index.")
     print("Tips:")
@@ -120,7 +137,7 @@ def prompt_folder_selection(remembered_folders: Optional[List[str]] = None) -> L
         selected_folders.append(abs_path)
         print(f"  [+] Added: {abs_path}")
 
-    return selected_folders
+    return selected_folders, False
 
 
 def display_selected_folders(folders: List[str]):
@@ -189,13 +206,34 @@ def run_cli_flow(
         cached_unindexed = {}
 
     # 2. Determine target folders
+    skip_scan = False
     if not input_folders:
-        folders = prompt_folder_selection(remembered_folders if cached_songs else None)
+        folders, skip_scan = prompt_folder_selection(
+            remembered_folders if cached_songs else None,
+            allow_skip_to_gui=bool(cached_songs)
+        )
     else:
         folders = [os.path.abspath(f.strip('\"\'')) for f in input_folders if os.path.isdir(f.strip('\"\''))]
         if not folders:
             print("[!] None of the provided folder paths are valid directories.")
-            folders = prompt_folder_selection(remembered_folders)
+            folders, skip_scan = prompt_folder_selection(
+                remembered_folders,
+                allow_skip_to_gui=bool(cached_songs)
+            )
+
+    # 3. Fast launch option if user opted to skip scanning
+    if skip_scan and cached_songs:
+        print("\n[+] Launching GUI music player directly with existing library catalog...")
+        songs_list = list(cached_songs.values())
+        unindexed_list = list(cached_unindexed.values())
+        if launch_gui_after_scan:
+            launch_gui(
+                songs=songs_list,
+                unindexed=unindexed_list,
+                preferred_engine=preferred_player_engine,
+                songs_json_path=songs_json_path,
+            )
+        return ScanResult(folders=folders, songs=songs_list, unindexed_files=unindexed_list)
 
     display_selected_folders(folders)
 
@@ -252,6 +290,11 @@ def run_cli_flow(
     if launch_gui_after_scan:
         print("\n[+] Launching Multi-Tab Music Player & Inspector...")
         print("    (Close the GUI window when finished)")
-        launch_gui(result.songs, unindexed=result.unindexed_files, preferred_engine=preferred_player_engine)
+        launch_gui(
+            result.songs,
+            unindexed=result.unindexed_files,
+            preferred_engine=preferred_player_engine,
+            songs_json_path=songs_json_path,
+        )
 
     return result

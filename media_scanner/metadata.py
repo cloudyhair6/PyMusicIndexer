@@ -1,10 +1,15 @@
 """
 Metadata Extraction & VLC Fingerprinting Module
 ===============================================
-Extracts audio tags and stream properties from various audio formats.
+Extracts full audio tags, stream properties, and extended Windows Details metadata:
+- Description: Title, Subtitle, Rating, Comments
+- Media: Contributing Artists, Album Artist, Album, Year, Track #, Genre, Duration
+- Origin: Publisher, Encoded by, Author URL, Copyright
+- Content: Composers, Conductors, Group description, Mood, Part of set (Disc #),
+  Initial key, Beats-per-minute (BPM), Part of a compilation
+- Web Artwork: album_art_web_url, album_art_html_link
 Includes pure-Python parsers for MP3, WAV, FLAC, OGG, and M4A,
-artwork detection, incomplete metadata classification, and
-LibVLC media parsing and fingerprinting integration.
+artwork detection, incomplete metadata classification, and LibVLC integration.
 """
 
 from __future__ import annotations
@@ -14,10 +19,10 @@ import sys
 import struct
 import datetime
 import ctypes
+import urllib.parse
 from dataclasses import dataclass, asdict, field
 from typing import Dict, Any, Optional, Tuple, List
 
-# Check for optional third-party libraries
 _MUTAGEN_AVAILABLE = False
 _TINYTAG_AVAILABLE = False
 
@@ -75,35 +80,78 @@ def format_file_size(size_bytes: int) -> str:
 
 @dataclass
 class AudioMetadata:
-    """Encapsulates all extracted metadata for an audio track."""
+    """Encapsulates all extracted metadata for an audio track, matching Windows Details properties."""
+    # Basic identification & file info
     file_path: str
     file_name: str
     file_size_bytes: int
     file_size_human: str
     extension: str
     format: str
+
+    # Description
     title: str
-    artist: str
-    album: str
-    album_artist: str
-    genre: str
-    year: Optional[str]
-    track_number: Optional[str]
-    duration_seconds: float
-    duration_formatted: str
-    bitrate_kbps: Optional[int]
-    sample_rate_hz: Optional[int]
-    channels: Optional[int]
-    last_modified: str
+    subtitle: Optional[str] = None
+    rating: Optional[int] = None  # 1 to 5 stars
+    comments: Optional[str] = None
+
+    # Media
+    artist: str = "Unknown Artist"  # Contributing artists
+    album_artist: str = ""
+    album: str = "Unknown Album"
+    year: Optional[str] = None
+    track_number: Optional[str] = None  # #
+    disc_number: Optional[str] = None   # Part of set
+    genre: str = "Unknown Genre"
+    duration_seconds: float = 0.0
+    duration_formatted: str = "00:00"
+
+    # Audio technical properties
+    bitrate_kbps: Optional[int] = None
+    sample_rate_hz: Optional[int] = None
+    channels: Optional[int] = None
+    bits_per_sample: Optional[int] = None
+
+    # Origin
+    publisher: Optional[str] = None
+    encoded_by: Optional[str] = None
+    author_url: Optional[str] = None
+    copyright: Optional[str] = None
+
+    # Content
+    composer: Optional[str] = None
+    conductor: Optional[str] = None
+    grouping: Optional[str] = None      # Group description
+    mood: Optional[str] = None
+    initial_key: Optional[str] = None
+    bpm: Optional[int] = None           # Beats-per-minute
+    is_compilation: bool = False        # Part of a compilation
+
+    # File system timestamps
+    last_modified: str = ""
     mtime_timestamp: float = 0.0
 
-    # Incomplete metadata & artwork attributes
+    # Album artwork (Local & Web URL links)
     has_album_art: bool = False
     album_art_path: Optional[str] = None
+    album_art_web_url: Optional[str] = None   # Direct web link to download image from CDN
+    album_art_html_link: Optional[str] = None # HTML anchor link for browsers/JSON consumers
+
+    # Incomplete metadata tracking
     has_incomplete_metadata: bool = False
     missing_fields: List[str] = field(default_factory=list)
     vlc_fingerprinted: bool = False
     vlc_status: str = ""
+
+    @property
+    def is_missing_tags(self) -> bool:
+        """True if core text tags (title, artist, album) are missing."""
+        return any(m in ("title", "artist", "album") for m in self.missing_fields)
+
+    @property
+    def is_missing_art_only(self) -> bool:
+        """True if core text tags are complete, but album artwork is missing."""
+        return not self.is_missing_tags and ("album_art" in self.missing_fields)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert metadata to a serializable dictionary."""
@@ -111,12 +159,29 @@ class AudioMetadata:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "AudioMetadata":
-        """Reconstruct AudioMetadata instance from dictionary."""
-        # Ensure compatibility with older json caches
+        """Reconstruct AudioMetadata instance with backwards compatibility."""
         safe_data = dict(data)
+        safe_data.setdefault("subtitle", None)
+        safe_data.setdefault("rating", None)
+        safe_data.setdefault("comments", None)
+        safe_data.setdefault("disc_number", None)
+        safe_data.setdefault("bits_per_sample", None)
+        safe_data.setdefault("publisher", None)
+        safe_data.setdefault("encoded_by", None)
+        safe_data.setdefault("author_url", None)
+        safe_data.setdefault("copyright", None)
+        safe_data.setdefault("composer", None)
+        safe_data.setdefault("conductor", None)
+        safe_data.setdefault("grouping", None)
+        safe_data.setdefault("mood", None)
+        safe_data.setdefault("initial_key", None)
+        safe_data.setdefault("bpm", None)
+        safe_data.setdefault("is_compilation", False)
         safe_data.setdefault("mtime_timestamp", 0.0)
         safe_data.setdefault("has_album_art", False)
         safe_data.setdefault("album_art_path", None)
+        safe_data.setdefault("album_art_web_url", None)
+        safe_data.setdefault("album_art_html_link", None)
         safe_data.setdefault("has_incomplete_metadata", False)
         safe_data.setdefault("missing_fields", [])
         safe_data.setdefault("vlc_fingerprinted", False)
@@ -147,7 +212,7 @@ class MetadataExtractor:
         return None
 
     @classmethod
-    def evaluate_completeness(cls, meta: AudioMetadata) -> None:
+    def evaluate_completeness(cls, meta: AudioMetadata, require_artwork: bool = True) -> None:
         """Determines if the song has missing/incomplete metadata."""
         missing = []
         stem = os.path.splitext(meta.file_name)[0]
@@ -169,30 +234,26 @@ class MetadataExtractor:
             missing.append("album_art")
 
         meta.missing_fields = missing
-        meta.has_incomplete_metadata = len(missing) > 0
+        if require_artwork:
+            meta.has_incomplete_metadata = len(missing) > 0
+        else:
+            meta.has_incomplete_metadata = any(m in ("title", "artist", "album") for m in missing)
 
     @classmethod
     def extract(cls, file_path: str) -> AudioMetadata:
-        """
-        Extract metadata from given audio file.
-        Uses mutagen/tinytag if available, otherwise pure Python parser.
-        """
+        """Extract metadata and extended Windows Details properties."""
         abs_path = os.path.abspath(file_path)
         if not os.path.isfile(abs_path):
             raise FileNotFoundError(f"File not found: {abs_path}")
 
         file_stat = os.stat(abs_path)
-        file_size = file_stat.st_size
         mtime = file_stat.st_mtime
-        mod_time = datetime.datetime.fromtimestamp(mtime).isoformat()
-        file_name = os.path.basename(abs_path)
-        stem, ext = os.path.splitext(file_name)
+        _, ext = os.path.splitext(os.path.basename(abs_path))
         ext_lower = ext.lower()
 
         if not cls.is_audio_file(abs_path):
             raise ValueError(f"Unsupported audio format extension: {ext_lower}")
 
-        # Try mutagen if available
         meta = None
         if _MUTAGEN_AVAILABLE:
             try:
@@ -200,14 +261,12 @@ class MetadataExtractor:
             except Exception:
                 meta = None
 
-        # Try tinytag if available
         if meta is None and _TINYTAG_AVAILABLE:
             try:
                 meta = cls._extract_with_tinytag(abs_path, file_stat, ext_lower)
             except Exception:
                 meta = None
 
-        # Built-in pure Python extractors
         if meta is None:
             meta = cls._extract_pure_python(abs_path, file_stat, ext_lower)
 
@@ -220,9 +279,12 @@ class MetadataExtractor:
                 meta.has_album_art = True
                 meta.album_art_path = folder_art
 
-        # Evaluate if metadata is incomplete
-        cls.evaluate_completeness(meta)
+        # If local album art exists, create direct link to the image file
+        if meta.has_album_art and meta.album_art_path and os.path.isfile(meta.album_art_path):
+            file_uri = f"file:///{os.path.abspath(meta.album_art_path).replace(os.sep, '/')}"
+            meta.album_art_html_link = f'<a href="{file_uri}" target="_blank" download="cover.jpg">Download Album Art Image</a>'
 
+        cls.evaluate_completeness(meta)
         return meta
 
     # ------------------------------------------------------------------
@@ -241,6 +303,7 @@ class MetadataExtractor:
             bitrate = int(bitrate // 1000)
         sample_rate = getattr(info, "sample_rate", None)
         channels = getattr(info, "channels", None)
+        bits = getattr(info, "bits_per_sample", None)
 
         tags = getattr(audio, "tags", None) or {}
 
@@ -249,10 +312,10 @@ class MetadataExtractor:
                 if k in tags:
                     val = tags[k]
                     if isinstance(val, list) and len(val) > 0:
-                        return str(val[0])
+                        return str(val[0]).strip()
                     elif isinstance(val, str):
-                        return val
-            return ""
+                        return val.strip()
+            return None
 
         title = get_tag(["title", "TIT2"]) or os.path.splitext(os.path.basename(path))[0]
         artist = get_tag(["artist", "TPE1"]) or "Unknown Artist"
@@ -261,8 +324,26 @@ class MetadataExtractor:
         genre = get_tag(["genre", "TCON"]) or "Unknown Genre"
         year = get_tag(["date", "year", "TDRC", "TYER"]) or None
         track = get_tag(["tracknumber", "TRCK"]) or None
+        disc = get_tag(["discnumber", "TPOS"]) or None
+        subtitle = get_tag(["subtitle", "TIT3"])
+        composer = get_tag(["composer", "TCOM"])
+        conductor = get_tag(["conductor", "TPE3"])
+        publisher = get_tag(["publisher", "organization", "TPUB"])
+        encoded_by = get_tag(["encodedby", "encoder", "TENC"])
+        copyright_txt = get_tag(["copyright", "TCOP"])
+        comments = get_tag(["comment", "description", "COMM"])
+        grouping = get_tag(["grouping", "contentgroup", "TIT1"])
+        mood = get_tag(["mood", "TMOO"])
+        key = get_tag(["initialkey", "TKEY"])
+        bpm_val = None
+        bpm_str = get_tag(["bpm", "TBPM"])
+        if bpm_str:
+            try:
+                bpm_val = int(float(bpm_str))
+            except Exception:
+                pass
+        is_comp = bool(get_tag(["compilation", "TCMP"]))
 
-        # Check embedded cover
         has_art = False
         if hasattr(audio, "pictures") and len(audio.pictures) > 0:
             has_art = True
@@ -277,17 +358,31 @@ class MetadataExtractor:
             extension=ext,
             format=ext.lstrip(".").upper(),
             title=title,
+            subtitle=subtitle,
             artist=artist,
-            album=album,
             album_artist=album_artist,
-            genre=genre,
+            album=album,
             year=str(year) if year else None,
             track_number=str(track) if track else None,
+            disc_number=str(disc) if disc else None,
+            genre=genre,
             duration_seconds=float(duration),
             duration_formatted=format_seconds(duration),
             bitrate_kbps=bitrate,
             sample_rate_hz=sample_rate,
             channels=channels,
+            bits_per_sample=bits,
+            publisher=publisher,
+            encoded_by=encoded_by,
+            copyright=copyright_txt,
+            comments=comments,
+            composer=composer,
+            conductor=conductor,
+            grouping=grouping,
+            mood=mood,
+            initial_key=key,
+            bpm=bpm_val,
+            is_compilation=is_comp,
             last_modified=datetime.datetime.fromtimestamp(stat_res.st_mtime).isoformat(),
             mtime_timestamp=stat_res.st_mtime,
             has_album_art=has_art,
@@ -315,6 +410,9 @@ class MetadataExtractor:
             genre=tag.genre or "Unknown Genre",
             year=str(tag.year) if tag.year else None,
             track_number=str(tag.track) if tag.track else None,
+            disc_number=str(tag.disc) if getattr(tag, "disc", None) else None,
+            composer=getattr(tag, "composer", None),
+            comments=getattr(tag, "comment", None),
             duration_seconds=float(duration),
             duration_formatted=format_seconds(duration),
             bitrate_kbps=int(tag.bitrate) if tag.bitrate else None,
@@ -357,12 +455,15 @@ class MetadataExtractor:
         sample_rate = None
         channels = None
         bitrate = None
+        bits_per_sample = None
 
         try:
             with wave.open(path, "rb") as wf:
                 channels = wf.getnchannels()
                 sample_rate = wf.getframerate()
                 n_frames = wf.getnframes()
+                sampwidth = wf.getsampwidth()
+                bits_per_sample = sampwidth * 8
                 if sample_rate > 0:
                     duration = n_frames / float(sample_rate)
                 if duration > 0:
@@ -373,6 +474,7 @@ class MetadataExtractor:
                 duration = riff_info["duration"]
                 channels = riff_info.get("channels")
                 sample_rate = riff_info.get("sample_rate")
+                bits_per_sample = riff_info.get("bits_per_sample")
             else:
                 raise ValueError(f"Corrupted or invalid WAV file: {e}")
 
@@ -383,6 +485,9 @@ class MetadataExtractor:
         genre = tags.get("IGNR") or genre
         year = tags.get("ICRD") or year
         track = tags.get("ITRK") or track
+        comments = tags.get("ICMT")
+        copyright_txt = tags.get("ICOP")
+        encoded_by = tags.get("IENG") or tags.get("ISFT")
 
         return AudioMetadata(
             file_path=path,
@@ -403,6 +508,10 @@ class MetadataExtractor:
             bitrate_kbps=bitrate,
             sample_rate_hz=sample_rate,
             channels=channels,
+            bits_per_sample=bits_per_sample,
+            encoded_by=encoded_by,
+            copyright=copyright_txt,
+            comments=comments,
             last_modified=datetime.datetime.fromtimestamp(stat_res.st_mtime).isoformat(),
             mtime_timestamp=stat_res.st_mtime,
         )
@@ -424,10 +533,11 @@ class MetadataExtractor:
                     if chunk_id == b"fmt ":
                         fmt_data = f.read(chunk_size)
                         if len(fmt_data) >= 16:
-                            _, channels, sample_rate, byte_rate, _, _ = struct.unpack("<HHIIHH", fmt_data[:16])
+                            _, channels, sample_rate, byte_rate, _, bits = struct.unpack("<HHIIHH", fmt_data[:16])
                             tags["channels"] = channels
                             tags["sample_rate"] = sample_rate
                             tags["bitrate"] = int((byte_rate * 8) // 1000)
+                            tags["bits_per_sample"] = bits
                     elif chunk_id == b"data":
                         if "sample_rate" in tags and "channels" in tags and tags.get("bitrate"):
                             tags["duration"] = chunk_size / (tags["sample_rate"] * tags["channels"] * 2)
@@ -468,6 +578,21 @@ class MetadataExtractor:
         genre = "Unknown Genre"
         year = None
         track = None
+        disc = None
+        subtitle = None
+        composer = None
+        conductor = None
+        publisher = None
+        encoded_by = None
+        copyright_txt = None
+        comments = None
+        grouping = None
+        mood = None
+        key = None
+        bpm_val = None
+        is_comp = False
+        rating = None
+        author_url = None
         bitrate = None
         sample_rate = None
         channels = None
@@ -476,14 +601,39 @@ class MetadataExtractor:
 
         id3v2_tags, audio_offset, has_apic = cls._parse_id3v2(path)
         has_art = has_apic
+
         if id3v2_tags:
             title = id3v2_tags.get("TIT2") or id3v2_tags.get("TT2") or title
+            subtitle = id3v2_tags.get("TIT3") or id3v2_tags.get("TT3")
             artist = id3v2_tags.get("TPE1") or id3v2_tags.get("TP1") or artist
+            album_artist = id3v2_tags.get("TPE2") or id3v2_tags.get("TP2") or ""
+            conductor = id3v2_tags.get("TPE3")
+            composer = id3v2_tags.get("TCOM") or id3v2_tags.get("TCM")
             album = id3v2_tags.get("TALB") or id3v2_tags.get("TAL") or album
-            album_artist = id3v2_tags.get("TPE2") or ""
             genre = id3v2_tags.get("TCON") or id3v2_tags.get("TCO") or genre
             year = id3v2_tags.get("TDRC") or id3v2_tags.get("TYER") or id3v2_tags.get("TYE") or None
             track = id3v2_tags.get("TRCK") or id3v2_tags.get("TRK") or None
+            disc = id3v2_tags.get("TPOS") or id3v2_tags.get("TPA") or None
+            publisher = id3v2_tags.get("TPUB") or id3v2_tags.get("TPB")
+            encoded_by = id3v2_tags.get("TENC") or id3v2_tags.get("TEN")
+            copyright_txt = id3v2_tags.get("TCOP") or id3v2_tags.get("TCR")
+            comments = id3v2_tags.get("COMM") or id3v2_tags.get("COM")
+            grouping = id3v2_tags.get("TIT1")
+            mood = id3v2_tags.get("TMOO")
+            key = id3v2_tags.get("TKEY")
+            bpm_str = id3v2_tags.get("TBPM")
+            if bpm_str:
+                try:
+                    bpm_val = int(float(bpm_str))
+                except Exception:
+                    pass
+            is_comp = id3v2_tags.get("TCMP") == "1"
+            if "RATING" in id3v2_tags:
+                try:
+                    rating = int(id3v2_tags["RATING"])
+                except Exception:
+                    pass
+            author_url = id3v2_tags.get("WXXX") or id3v2_tags.get("WOAR")
 
         id3v1_tags = cls._parse_id3v1(path)
         if id3v1_tags:
@@ -497,6 +647,8 @@ class MetadataExtractor:
                 year = id3v1_tags["year"]
             if not track and id3v1_tags.get("track"):
                 track = id3v1_tags["track"]
+            if not comments and id3v1_tags.get("comment"):
+                comments = id3v1_tags["comment"]
 
         mp3_props = cls._parse_mpeg_frame_headers(path, audio_offset, stat_res.st_size)
         if mp3_props:
@@ -519,17 +671,32 @@ class MetadataExtractor:
             extension=ext,
             format="MP3",
             title=title,
+            subtitle=subtitle,
+            rating=rating,
+            comments=comments,
             artist=artist,
-            album=album,
             album_artist=album_artist or artist,
-            genre=genre,
+            album=album,
             year=year,
             track_number=track,
+            disc_number=disc,
+            genre=genre,
             duration_seconds=duration,
             duration_formatted=format_seconds(duration),
             bitrate_kbps=bitrate,
             sample_rate_hz=sample_rate,
             channels=channels,
+            publisher=publisher,
+            encoded_by=encoded_by,
+            author_url=author_url,
+            copyright=copyright_txt,
+            composer=composer,
+            conductor=conductor,
+            grouping=grouping,
+            mood=mood,
+            initial_key=key,
+            bpm=bpm_val,
+            is_compilation=is_comp,
             last_modified=datetime.datetime.fromtimestamp(stat_res.st_mtime).isoformat(),
             mtime_timestamp=stat_res.st_mtime,
             has_album_art=has_art,
@@ -590,6 +757,7 @@ class MetadataExtractor:
                     if frame_id in ("APIC", "PIC"):
                         has_apic = True
 
+                    # Text frames (starts with T or W for URLs)
                     if frame_id.startswith("T") and frame_id not in ("TXXX", "TX") and len(raw_content) > 1:
                         encoding = raw_content[0]
                         data = raw_content[1:]
@@ -603,6 +771,38 @@ class MetadataExtractor:
                             else:
                                 val = data.decode("utf-8", errors="ignore")
                             tags[frame_id] = val.strip("\x00").strip()
+                        except Exception:
+                            pass
+
+                    # Comments frame (COMM / COM)
+                    elif frame_id in ("COMM", "COM") and len(raw_content) > 4:
+                        try:
+                            encoding = raw_content[0]
+                            # skip 3 bytes language
+                            c_body = raw_content[4:]
+                            if encoding == 0:
+                                parts = c_body.split(b"\x00", 1)
+                                text_val = parts[1].decode("iso-8859-1", errors="ignore") if len(parts) > 1 else parts[0].decode("iso-8859-1", errors="ignore")
+                            else:
+                                text_val = c_body.decode("utf-16", errors="ignore")
+                            tags["COMM"] = text_val.strip("\x00").strip()
+                        except Exception:
+                            pass
+
+                    # Popularimeter / Rating frame (POPM)
+                    elif frame_id == "POPM" and len(raw_content) > 2:
+                        try:
+                            # format: email null-terminated, rating (1 byte), counter
+                            null_idx = raw_content.find(b"\x00")
+                            if null_idx != -1 and null_idx + 1 < len(raw_content):
+                                r_val = raw_content[null_idx + 1]
+                                if r_val >= 255: stars = 5
+                                elif r_val >= 196: stars = 4
+                                elif r_val >= 128: stars = 3
+                                elif r_val >= 64: stars = 2
+                                elif r_val >= 1: stars = 1
+                                else: stars = 0
+                                tags["RATING"] = str(stars)
                         except Exception:
                             pass
         except Exception:
@@ -622,6 +822,7 @@ class MetadataExtractor:
                     tags["artist"] = buf[33:63].decode("iso-8859-1", errors="ignore").strip("\x00").strip()
                     tags["album"] = buf[63:93].decode("iso-8859-1", errors="ignore").strip("\x00").strip()
                     tags["year"] = buf[93:97].decode("iso-8859-1", errors="ignore").strip("\x00").strip()
+                    tags["comment"] = buf[97:125].decode("iso-8859-1", errors="ignore").strip("\x00").strip()
                     if buf[125] == 0:
                         tags["track"] = str(buf[126])
         except Exception:
@@ -677,9 +878,22 @@ class MetadataExtractor:
         genre = "Unknown Genre"
         year = None
         track = None
+        disc = None
+        subtitle = None
+        composer = None
+        conductor = None
+        publisher = None
+        encoded_by = None
+        copyright_txt = None
+        comments = None
+        bpm_val = None
+        key = None
+        mood = None
+        is_comp = False
         duration = 0.0
         sample_rate = 44100
         channels = 2
+        bits_per_sample = 16
         bitrate = None
         has_art = False
 
@@ -701,20 +915,35 @@ class MetadataExtractor:
                     if len(block_data) >= 18:
                         sample_rate = (block_data[10] << 12) | (block_data[11] << 4) | (block_data[12] >> 4)
                         channels = ((block_data[12] >> 1) & 0x07) + 1
+                        bits_per_sample = ((block_data[12] & 0x01) << 4) | (block_data[13] >> 4) + 1
                         total_samples = ((block_data[13] & 0x0F) << 32) | struct.unpack(">I", block_data[14:18])[0]
                         if sample_rate > 0:
                             duration = total_samples / float(sample_rate)
                             if duration > 0:
                                 bitrate = int((stat_res.st_size * 8) / (duration * 1000))
                 elif block_type == 4:  # VORBIS_COMMENT
-                    comments = cls._parse_vorbis_comment_block(block_data)
-                    title = comments.get("TITLE") or title
-                    artist = comments.get("ARTIST") or artist
-                    album = comments.get("ALBUM") or album
-                    album_artist = comments.get("ALBUMARTIST") or ""
-                    genre = comments.get("GENRE") or genre
-                    year = comments.get("DATE") or comments.get("YEAR") or None
-                    track = comments.get("TRACKNUMBER") or None
+                    c = cls._parse_vorbis_comment_block(block_data)
+                    title = c.get("TITLE") or title
+                    subtitle = c.get("SUBTITLE")
+                    artist = c.get("ARTIST") or artist
+                    album = c.get("ALBUM") or album
+                    album_artist = c.get("ALBUMARTIST") or ""
+                    genre = c.get("GENRE") or genre
+                    year = c.get("DATE") or c.get("YEAR") or None
+                    track = c.get("TRACKNUMBER") or None
+                    disc = c.get("DISCNUMBER") or None
+                    composer = c.get("COMPOSER")
+                    conductor = c.get("CONDUCTOR")
+                    publisher = c.get("PUBLISHER") or c.get("ORGANIZATION")
+                    encoded_by = c.get("ENCODER") or c.get("ENCODEDBY")
+                    copyright_txt = c.get("COPYRIGHT")
+                    comments = c.get("COMMENT") or c.get("DESCRIPTION")
+                    key = c.get("KEY")
+                    mood = c.get("MOOD")
+                    is_comp = c.get("COMPILATION") == "1"
+                    if c.get("BPM"):
+                        try: bpm_val = int(float(c["BPM"]))
+                        except Exception: pass
                 elif block_type == 6:  # PICTURE
                     has_art = True
 
@@ -729,17 +958,30 @@ class MetadataExtractor:
             extension=ext,
             format="FLAC",
             title=title,
+            subtitle=subtitle,
             artist=artist,
             album=album,
             album_artist=album_artist or artist,
             genre=genre,
             year=year,
             track_number=track,
+            disc_number=disc,
+            composer=composer,
+            conductor=conductor,
+            publisher=publisher,
+            encoded_by=encoded_by,
+            copyright=copyright_txt,
+            comments=comments,
+            initial_key=key,
+            mood=mood,
+            bpm=bpm_val,
+            is_compilation=is_comp,
             duration_seconds=duration,
             duration_formatted=format_seconds(duration),
             bitrate_kbps=bitrate,
             sample_rate_hz=sample_rate,
             channels=channels,
+            bits_per_sample=bits_per_sample,
             last_modified=datetime.datetime.fromtimestamp(stat_res.st_mtime).isoformat(),
             mtime_timestamp=stat_res.st_mtime,
             has_album_art=has_art,
@@ -925,7 +1167,6 @@ class VLCMetadataEnricher:
 
     @classmethod
     def get_vlc_instance(cls):
-        """Singleton LibVLC instance for background parsing."""
         if cls._instance is not None:
             return cls._vlc_dll, cls._instance
 
@@ -975,10 +1216,6 @@ class VLCMetadataEnricher:
 
     @classmethod
     def enrich(cls, meta: AudioMetadata) -> bool:
-        """
-        Parses the track with LibVLC to fill in missing metadata or locate artwork.
-        Returns True if any field was enriched.
-        """
         dll, inst = cls.get_vlc_instance()
         if not dll or not inst:
             meta.vlc_fingerprinted = False
@@ -1004,9 +1241,16 @@ class VLCMetadataEnricher:
             vlc_title = get_vlc_meta(0)
             vlc_artist = get_vlc_meta(1)
             vlc_genre = get_vlc_meta(2)
+            vlc_copyright = get_vlc_meta(3)
             vlc_album = get_vlc_meta(4)
+            vlc_track = get_vlc_meta(5)
+            vlc_description = get_vlc_meta(6)
             vlc_date = get_vlc_meta(8)
             vlc_art = get_vlc_meta(15)  # ArtworkURL
+            vlc_publisher = get_vlc_meta(13)
+            vlc_encoded = get_vlc_meta(14)
+            vlc_album_artist = get_vlc_meta(23)
+            vlc_disc = get_vlc_meta(24)
 
             stem = os.path.splitext(meta.file_name)[0]
 
@@ -1035,7 +1279,28 @@ class VLCMetadataEnricher:
                 meta.year = vlc_date[:4]
                 enriched = True
 
-            # Enrich Artwork
+            # Enrich Track #
+            if not meta.track_number and vlc_track:
+                meta.track_number = vlc_track
+                enriched = True
+
+            # Enrich Disc #
+            if not meta.disc_number and vlc_disc:
+                meta.disc_number = vlc_disc
+                enriched = True
+
+            # Enrich Album Artist
+            if not meta.album_artist and vlc_album_artist:
+                meta.album_artist = vlc_album_artist
+                enriched = True
+
+            # Enrich Publisher, Copyright, EncodedBy
+            if not meta.publisher and vlc_publisher: meta.publisher = vlc_publisher; enriched = True
+            if not meta.copyright and vlc_copyright: meta.copyright = vlc_copyright; enriched = True
+            if not meta.encoded_by and vlc_encoded: meta.encoded_by = vlc_encoded; enriched = True
+            if not meta.comments and vlc_description: meta.comments = vlc_description; enriched = True
+
+            # Enrich Artwork via VLC ArtworkURL
             if not meta.has_album_art and vlc_art:
                 meta.has_album_art = True
                 meta.album_art_path = vlc_art
@@ -1043,9 +1308,17 @@ class VLCMetadataEnricher:
 
             dll.libvlc_media_release(media)
 
+            # Resolve album artwork & web URL link
+            try:
+                from .artwork import AlbumArtManager
+                art_resolved = AlbumArtManager.resolve_artwork(meta, enable_online_download=True)
+                if art_resolved:
+                    enriched = True
+            except Exception:
+                pass
+
             meta.vlc_fingerprinted = True
             meta.vlc_status = "VLC Enriched" if enriched else "VLC Parsed (No new tags)"
-            # Re-evaluate missing fields
             MetadataExtractor.evaluate_completeness(meta)
         except Exception as e:
             meta.vlc_fingerprinted = False

@@ -144,6 +144,53 @@ class TestMediaScanner(unittest.TestCase):
         win.update_timer.stop()
         win.player.cleanup()
 
+    def test_audio_metadata_writer(self):
+        from media_scanner.writer import AudioMetadataWriter
+        test_file = os.path.join(self.test_dir, "Pop", "write_test_track.wav")
+        create_sine_wave(test_file, duration_sec=1.0)
+
+        meta = MetadataExtractor.extract(test_file)
+        meta.title = "Custom Written Title"
+        meta.artist = "Custom Artist"
+        meta.album = "Custom Album"
+
+        ok, err = AudioMetadataWriter.write_metadata(meta)
+        self.assertTrue(ok, f"Writer failed: {err}")
+
+        # Read back from physical file
+        re_meta = MetadataExtractor.extract(test_file)
+        self.assertEqual(re_meta.title, "Custom Written Title")
+        self.assertEqual(re_meta.artist, "Custom Artist")
+        self.assertEqual(re_meta.album, "Custom Album")
+
+    def test_album_art_manager_and_embedding(self):
+        from media_scanner.artwork import AlbumArtManager
+        from media_scanner.writer import AudioMetadataWriter
+
+        test_mp3 = os.path.join(self.test_dir, "Pop", "art_test_song.mp3")
+        from sample_data_gen import create_mock_mp3_with_id3v2
+        create_mock_mp3_with_id3v2(test_mp3, "Art Song", "Art Artist", "Art Album", "Pop", "2026")
+
+        meta = MetadataExtractor.extract(test_mp3)
+
+        # Create a sample local cover image
+        cover_path = os.path.join(self.test_dir, "Pop", "cover.jpg")
+        with open(cover_path, "wb") as f:
+            f.write(b"\xFF\xD8\xFF\xE0" + b"\x00" * 300 + b"\xFF\xD9")
+
+        found = AlbumArtManager.resolve_artwork(meta, enable_online_download=False)
+        self.assertTrue(found)
+        self.assertTrue(meta.has_album_art)
+        self.assertEqual(meta.album_art_path, cover_path)
+
+        # Write to physical file and embed artwork
+        ok, err = AudioMetadataWriter.write_metadata(meta)
+        self.assertTrue(ok)
+
+        # Read back from disk
+        re_meta = MetadataExtractor.extract(test_mp3)
+        self.assertTrue(re_meta.has_album_art)
+
 
 if __name__ == "__main__":
     unittest.main()

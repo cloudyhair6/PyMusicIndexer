@@ -1,58 +1,9 @@
 {
   "metadata_version": "1.1",
-  "total_unindexed": 4,
+  "total_unindexed": 0,
   "scanned_folders": [
-    "C:\\Users\\Will\\OneDrive\\github\\copilot cli\\python media scanning\\sample_music_library"
+    "C:\\Users\\Will\\Downloads\\music temp"
   ],
-  "generated_at": "2026-10-28T17:32:31.673227",
-  "files": [
-    {
-      "file_path": "c:\\users\\will\\onedrive\\github\\copilot cli\\python media scanning\\sample_music_library\\album_cover.jpg",
-      "file_name": "album_cover.jpg",
-      "file_size_bytes": 22,
-      "file_size_human": "22 B",
-      "extension": ".jpg",
-      "is_song": false,
-      "reason": "Non-audio file extension (.jpg)",
-      "error_details": null,
-      "last_modified": "2026-10-28T17:02:21.885391",
-      "mtime_timestamp": 1793206941.8853908
-    },
-    {
-      "file_path": "c:\\users\\will\\onedrive\\github\\copilot cli\\python media scanning\\sample_music_library\\documents\\tracklist.txt",
-      "file_name": "tracklist.txt",
-      "file_size_bytes": 56,
-      "file_size_human": "56 B",
-      "extension": ".txt",
-      "is_song": false,
-      "reason": "Non-audio file extension (.txt)",
-      "error_details": null,
-      "last_modified": "2026-10-28T17:02:21.885391",
-      "mtime_timestamp": 1793206941.8853908
-    },
-    {
-      "file_path": "c:\\users\\will\\onedrive\\github\\copilot cli\\python media scanning\\sample_music_library\\pop\\lyrics.pdf",
-      "file_name": "lyrics.pdf",
-      "file_size_bytes": 29,
-      "file_size_human": "29 B",
-      "extension": ".pdf",
-      "is_song": false,
-      "reason": "Non-audio file extension (.pdf)",
-      "error_details": null,
-      "last_modified": "2026-10-28T17:02:21.886431",
-      "mtime_timestamp": 1793206941.8864312
-    },
-    {
-      "file_path": "c:\\users\\will\\onedrive\\github\\copilot cli\\python media scanning\\sample_music_library\\rock\\broken_recording.mp3",
-      "file_name": "broken_recording.mp3",
-      "file_size_bytes": 51,
-      "file_size_human": "51 B",
-      "extension": ".mp3",
-      "is_song": false,
-      "reason": "Corrupted audio or metadata extraction failure",
-      "error_details": "Corrupted or invalid MP3 file: No valid ID3 tags or MPEG audio frames found.",
-      "last_modified": "2026-10-28T17:02:21.883884",
-      "mtime_timestamp": 1793206941.883884
-    }
-  ]
+  "generated_at": "2026-10-28T19:52:37.179548",
+  "files": []
 }
