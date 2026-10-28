@@ -1,0 +1,54 @@
+{
+  "metadata_version": "1.0",
+  "total_unindexed": 4,
+  "scanned_folders": [
+    "C:\\Users\\Will\\OneDrive\\github\\copilot cli\\python media scanning\\sample_music_library"
+  ],
+  "generated_at": "2026-10-28T17:05:48.036504",
+  "files": [
+    {
+      "file_path": "C:\\Users\\Will\\OneDrive\\github\\copilot cli\\python media scanning\\sample_music_library\\album_cover.jpg",
+      "file_name": "album_cover.jpg",
+      "file_size_bytes": 22,
+      "file_size_human": "22 B",
+      "extension": ".jpg",
+      "is_song": false,
+      "reason": "Non-audio file extension (.jpg)",
+      "error_details": null,
+      "last_modified": "2026-10-28T17:02:21.885391"
+    },
+    {
+      "file_path": "C:\\Users\\Will\\OneDrive\\github\\copilot cli\\python media scanning\\sample_music_library\\Documents\\tracklist.txt",
+      "file_name": "tracklist.txt",
+      "file_size_bytes": 56,
+      "file_size_human": "56 B",
+      "extension": ".txt",
+      "is_song": false,
+      "reason": "Non-audio file extension (.txt)",
+      "error_details": null,
+      "last_modified": "2026-10-28T17:02:21.885391"
+    },
+    {
+      "file_path": "C:\\Users\\Will\\OneDrive\\github\\copilot cli\\python media scanning\\sample_music_library\\Pop\\lyrics.pdf",
+      "file_name": "lyrics.pdf",
+      "file_size_bytes": 29,
+      "file_size_human": "29 B",
+      "extension": ".pdf",
+      "is_song": false,
+      "reason": "Non-audio file extension (.pdf)",
+      "error_details": null,
+      "last_modified": "2026-10-28T17:02:21.886431"
+    },
+    {
+      "file_path": "C:\\Users\\Will\\OneDrive\\github\\copilot cli\\python media scanning\\sample_music_library\\Rock\\broken_recording.mp3",
+      "file_name": "broken_recording.mp3",
+      "file_size_bytes": 51,
+      "file_size_human": "51 B",
+      "extension": ".mp3",
+      "is_song": false,
+      "reason": "Corrupted audio or metadata extraction failure",
+      "error_details": "Corrupted or invalid MP3 file: No valid ID3 tags or MPEG audio frames found.",
+      "last_modified": "2026-10-28T17:02:21.883884"
+    }
+  ]
+}

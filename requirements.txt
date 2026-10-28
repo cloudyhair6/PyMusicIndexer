@@ -1,0 +1,6 @@
+# Core GUI framework (already installed)
+PyQt6>=6.4.0
+
+# Optional dependencies for additional metadata & playback formats
+mutagen>=1.46.0      # Advanced tag parsing for less common formats
+python-vlc>=3.0.0    # Python wrapper for VLC (VLC 64-bit on system is auto-detected via ctypes)
