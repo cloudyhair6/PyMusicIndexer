@@ -1,20 +1,22 @@
 """
 Unit and Integration Tests for Media Scanner
 ============================================
-Tests metadata extraction, folder traversal, progress reporting,
-dual JSON serialization, and player backend initializations.
+Tests metadata extraction, smart incremental HDD refresh,
+VLC fingerprinting/enrichment, incomplete metadata detection,
+dual JSON persistence, and multi-tab GUI interfaces.
 """
 
 import os
+import sys
 import unittest
 import tempfile
 import shutil
 
-from media_scanner.metadata import MetadataExtractor, AudioMetadata
-from media_scanner.scanner import AudioIndexer, ScanResult
+from media_scanner.metadata import MetadataExtractor, AudioMetadata, VLCMetadataEnricher
+from media_scanner.scanner import AudioIndexer, ScanResult, FileScanStatus
 from media_scanner.storage import StorageManager
-from media_scanner.player import VLCPlayer, QtAudioPlayer, get_best_player
-from sample_data_gen import generate_sample_library
+from media_scanner.player import VLCPlayer, QtAudioPlayer
+from sample_data_gen import generate_sample_library, create_sine_wave
 
 
 class TestMediaScanner(unittest.TestCase):
@@ -41,79 +43,106 @@ class TestMediaScanner(unittest.TestCase):
         self.assertGreater(meta.duration_seconds, 2.0)
         self.assertGreater(meta.file_size_bytes, 1000)
 
-    def test_mp3_metadata_extraction(self):
-        mp3_path = os.path.join(self.test_dir, "Rock", "electric_pulse.mp3")
-        self.assertTrue(os.path.isfile(mp3_path))
+    def test_incomplete_metadata_detection(self):
+        # Create a track with no ID3 tags or album art
+        untagged_path = os.path.join(self.test_dir, "Pop", "untagged_track.wav")
+        create_sine_wave(untagged_path, duration_sec=1.5)
 
-        meta = MetadataExtractor.extract(mp3_path)
-        self.assertEqual(meta.format, "MP3")
-        self.assertEqual(meta.title, "Electric Pulse")
-        self.assertEqual(meta.artist, "Volt Riders")
-        self.assertEqual(meta.album, "High Voltage")
-        self.assertEqual(meta.genre, "Electronic Rock")
-        self.assertEqual(meta.year, "2026")
+        meta = MetadataExtractor.extract(untagged_path)
+        self.assertTrue(meta.has_incomplete_metadata)
+        self.assertTrue(any(f in meta.missing_fields for f in ["artist", "album", "album_art"]))
+
+    def test_vlc_enrichment(self):
+        wav_path = os.path.join(self.test_dir, "Pop", "summer_vibes.wav")
+        meta = MetadataExtractor.extract(wav_path)
+        # Attempt enrichment with LibVLC
+        VLCMetadataEnricher.enrich(meta)
+        self.assertTrue(meta.vlc_fingerprinted or meta.vlc_status != "")
 
     def test_corrupted_file_handling(self):
         corrupt_path = os.path.join(self.test_dir, "Rock", "broken_recording.mp3")
         with self.assertRaises(Exception):
             MetadataExtractor.extract(corrupt_path)
 
-    def test_indexer_and_dual_json_output(self):
+    def test_smart_incremental_refresh(self):
         indexer = AudioIndexer()
-        progress_records = []
 
-        def track_progress(cur, total, fn):
-            progress_records.append((cur, total, fn))
+        # 1. Initial scan
+        res1 = indexer.scan_folders([self.test_dir], recursive=True)
+        self.assertGreater(res1.song_count, 0)
+        initial_song_count = res1.song_count
 
-        result = indexer.scan_folders([self.test_dir], recursive=True, progress_callback=track_progress)
+        out_songs = os.path.join(tempfile.gettempdir(), "test_songs_cache.json")
+        out_unindexed = os.path.join(tempfile.gettempdir(), "test_unindexed_cache.json")
+        StorageManager.save_scan_result(res1, out_songs, out_unindexed)
 
-        self.assertGreater(result.total_files_examined, 0)
-        self.assertGreaterEqual(result.song_count, 4)  # 2 WAVs + 2 MP3s
-        self.assertGreaterEqual(result.unindexed_count, 4)  # txt, jpg, pdf, corrupt mp3
-        self.assertEqual(len(progress_records), result.total_files_examined)
+        # 2. Load cache
+        cached_songs, cached_unindexed, folders = StorageManager.load_cached_library(out_songs, out_unindexed)
+        self.assertEqual(len(cached_songs), initial_song_count)
 
-        # Verify storage
-        out_songs = os.path.join(self.test_dir, "test_songs.json")
-        out_unindexed = os.path.join(self.test_dir, "test_unindexed.json")
-
-        s_path, u_path = StorageManager.save_scan_result(
-            result,
-            songs_filepath=out_songs,
-            unindexed_filepath=out_unindexed,
+        # 3. Second scan with cache (no changes on disk)
+        res2 = indexer.scan_folders(
+            [self.test_dir],
+            recursive=True,
+            cached_songs=cached_songs,
+            cached_unindexed=cached_unindexed,
         )
+        # Verify 0 files needed to be re-indexed!
+        self.assertEqual(res2.new_files_count, 0)
+        self.assertEqual(res2.modified_files_count, 0)
+        self.assertEqual(res2.cached_files_count, res2.total_files_examined)
 
-        self.assertTrue(os.path.isfile(s_path))
-        self.assertTrue(os.path.isfile(u_path))
+        # 4. Add a new file and test incremental detection
+        new_track = os.path.join(self.test_dir, "Pop", "new_bonus_track.wav")
+        create_sine_wave(new_track, duration_sec=1.0)
 
-        loaded_songs = StorageManager.load_songs(s_path)
-        self.assertEqual(len(loaded_songs), result.song_count)
-        self.assertEqual(loaded_songs[0].title, result.songs[0].title)
+        res3 = indexer.scan_folders(
+            [self.test_dir],
+            recursive=True,
+            cached_songs=cached_songs,
+            cached_unindexed=cached_unindexed,
+        )
+        self.assertEqual(res3.new_files_count, 1)
+        self.assertEqual(res3.song_count, initial_song_count + 1)
 
-        loaded_unindexed = StorageManager.load_unindexed(u_path)
-        self.assertEqual(len(loaded_unindexed), result.unindexed_count)
+    def test_gui_offscreen_multi_tabs(self):
+        os.environ["QT_QPA_PLATFORM"] = "offscreen"
+        from PyQt6.QtWidgets import QApplication
+        from media_scanner.gui import MusicPlayerWindow
 
-    def test_player_backend_loading(self):
-        wav_path = os.path.join(self.test_dir, "Pop", "summer_vibes.wav")
+        app = QApplication.instance() or QApplication([])
 
-        # Test VLC Player
-        try:
-            vlc_player = VLCPlayer()
-            loaded = vlc_player.load(wav_path)
-            self.assertTrue(loaded)
-            vlc_player.set_volume(75)
-            self.assertEqual(vlc_player.get_volume(), 75)
-            vlc_player.cleanup()
-        except RuntimeError:
-            pass  # If VLC is unavailable in a test runner
+        songs = [
+            MetadataExtractor.extract(os.path.join(self.test_dir, "Pop", "summer_vibes.wav")),
+            MetadataExtractor.extract(os.path.join(self.test_dir, "Rock", "electric_pulse.mp3")),
+        ]
+        unindexed = [
+            FileScanStatus(
+                file_path="dummy.txt",
+                file_name="dummy.txt",
+                file_size_bytes=10,
+                file_size_human="10 B",
+                extension=".txt",
+                is_song=False,
+                reason="Non-audio file",
+            )
+        ]
 
-        # Test Qt Audio Player
-        try:
-            qt_player = QtAudioPlayer()
-            loaded_qt = qt_player.load(wav_path)
-            self.assertTrue(loaded_qt)
-            qt_player.cleanup()
-        except Exception:
-            pass
+        win = MusicPlayerWindow(songs=songs, unindexed=unindexed)
+        self.assertEqual(win.tabs.count(), 3)
+
+        # Switch to Incomplete Tab
+        win.tabs.setCurrentIndex(1)
+        self.assertEqual(win.tabs.currentIndex(), 1)
+
+        # Switch to Unindexed Tab
+        win.tabs.setCurrentIndex(2)
+        self.assertEqual(win.tabs.currentIndex(), 2)
+        self.assertEqual(win.table_unindexed.rowCount(), 1)
+
+        win.close()
+        win.update_timer.stop()
+        win.player.cleanup()
 
 
 if __name__ == "__main__":

@@ -1,24 +1,20 @@
-# Audio Media Scanner & Player
+# Audio Media Scanner, Inspector & Player
 
-A fast, modular Python application that indexes music collections from the command line, extracts rich audio metadata, exports detailed JSON catalogs, and launches a modern PyQt6 GUI music player powered by LibVLC or QtMultimedia.
+A fast, modular Python application that indexes music collections from the command line, extracts rich audio metadata, exports detailed JSON catalogs, and launches a multi-tab PyQt6 GUI music player powered by LibVLC or QtMultimedia.
+
+Engineered with a **Smart Incremental HDD Refresh Engine** that prevents unnecessary mechanical drive seeks on slow HDDs, plus **LibVLC media parsing and fingerprinting** to identify and enrich incomplete metadata.
 
 ---
 
-## Features
+## What's New in v1.1
 
-- **Interactive CMD Workflow**: Runs directly in the command prompt with no initial GUI. Prompts you to enter one or multiple folders with real-time directory validation.
-- **Folder Review**: Formats and displays the chosen target folders before indexing begins.
-- **Dynamic Terminal Progress Bar**: Pre-discovers file counts and displays an in-place progress bar showing percentage, file counts, and the current file being scanned without wrapping lines.
-- **Dual JSON Output**:
-  - `indexed_songs.json`: Stores complete metadata for all valid songs (Title, Artist, Album, Genre, Year, Track, Duration, Bitrate, Sample Rate, Channels, File Size, Path, Format).
-  - `unindexed_files.json`: Records all non-song files (txt, jpg, pdf, etc.) and failed/corrupted audio files with detailed explanations of why they were skipped.
-- **Console Failure Reporting**: Automatically prints a clear terminal breakdown of any files that could not be indexed.
-- **GUI Music Browser & Player**: Once cmd indexing finishes, automatically launches a dark-themed PyQt6 GUI featuring:
-  - Real-time search across Title, Artist, Album, Genre, and Path.
-  - Sortable track table with metadata columns.
-  - Audio playback with Play, Pause, Stop, Previous, Next, Seek slider, and Volume controls.
-  - **VLC Playback Engine**: Automatically loads and controls system VLC (`libvlc.dll`) with seamless fallback to QtMultimedia.
-- **Extensible & Modular**: Designed from the ground up as a standalone package (`media_scanner`) ready to be imported into larger projects, web backends, or desktop applications.
+- ⚡ **Smart Refresh Engine (Slow HDD Optimized)**: Remembers previous scan results and uses ultra-fast filesystem timestamp comparisons (`os.scandir` without opening audio files). Unchanged tracks are loaded from the JSON cache in milliseconds with **zero disk reads**, indexing *only* new or modified files.
+- 🔍 **LibVLC Fingerprinting & Media Parsing**: Automatically parses incomplete tracks (missing artwork, missing artist, missing title, or missing album) using system LibVLC (`libvlc.dll`) to enrich missing fields and detect album covers.
+- 📑 **Multi-Page GUI Interface**:
+  - **Tab 1: 🎵 All Songs**: Full searchable catalog with metadata columns and instant playback.
+  - **Tab 2: ⚠️ Incomplete Metadata**: Surfaces tracks missing album covers or tags, displays VLC fingerprinting status, and offers a live "⚡ Fingerprint with VLC" button.
+  - **Tab 3: ❌ Unindexed & Failed Files**: Displays non-audio files (txt, jpg, pdf) and corrupted audio files with clear explanations of why they were skipped, plus right-click to open in File Explorer.
+- 💾 **Folder Memory & Persistent JSON Store**: Remembers configured target folders on startup so you don't have to re-enter them each time.
 
 ---
 
@@ -28,15 +24,15 @@ A fast, modular Python application that indexes music collections from the comma
 python media scanning/
 │
 ├── media_scanner/
-│   ├── __init__.py           # Package exports and public API
-│   ├── metadata.py           # Pure Python & Mutagen audio metadata extractors
-│   ├── scanner.py            # Recursive directory crawler & batch indexer
-│   ├── storage.py            # Dual JSON persistence manager
+│   ├── __init__.py           # Package exports & public API
+│   ├── metadata.py           # Universal tag extraction, artwork & LibVLC enrichment
+│   ├── scanner.py            # Recursive crawler & Smart HDD refresh engine
+│   ├── storage.py            # Dual JSON persistence & cache manager
 │   ├── player.py             # LibVLC and QtAudioPlayer abstraction layers
-│   ├── gui.py                # Modern PyQt6 GUI player and search table
-│   └── cli.py                # Command-line interface and progress bar
+│   ├── gui.py                # Multi-tab PyQt6 GUI player and inspector
+│   └── cli.py                # Command-line interface with dynamic progress bar
 │
-├── main.py                   # Main CLI entrypoint
+├── main.py                   # Main executable CLI entrypoint
 ├── sample_data_gen.py        # Mock audio library generator for testing
 ├── requirements.txt          # Package requirements
 ├── tests/
@@ -46,124 +42,145 @@ python media scanning/
 
 ---
 
+## How It Works on Slow Mechanical Drives (Smart Refresh)
+
+Reading thousands of audio files from a slow mechanical hard drive to parse headers can take minutes or even hours.
+
+1. **First Run**:
+   Discovers all files, extracts tags, runs VLC fingerprinting on incomplete tracks, and writes two comprehensive JSON files:
+   - `indexed_songs.json`
+   - `unindexed_files.json`
+2. **Subsequent Runs (Smart Refresh)**:
+   - Reads the cached JSON catalogs into memory in milliseconds.
+   - Crawls target directories using `os.scandir` to retrieve *only* filesystem timestamps (`mtime`) and file sizes (`size`).
+   - If `(size, mtime)` matches the cached entry: **The audio file is never opened or read from disk!**
+   - The CMD progress bar only runs for newly detected or modified files.
+   - Any deleted files are automatically pruned from the cache.
+
+---
+
 ## Quick Start
 
 ### 1. Interactive Command-Line Mode
-Run the script in `cmd` or PowerShell:
 ```bash
 python main.py
 ```
-You will be prompted to enter folder paths:
+If an existing library cache is detected, it offers an instant one-press Smart Refresh:
 ```
 =================================================================
            AUDIO DIRECTORY SELECTION (CMD INTERFACE)           
 =================================================================
-Enter the full path to each folder you want to index.
-Tips:
-  - You can enter multiple directories one by one.
-  - Press [Enter] on an empty line when you have finished adding folders.
+Previous folders were found in the library cache:
+  [1] C:\Users\Will\Music
 -----------------------------------------------------------------
-Enter folder #1: C:\Users\Will\Music
-  [+] Added: C:\Users\Will\Music
-Enter folder #2: 
+Use these folders for a Smart Refresh? [Y/n]: Y
+
+Initiating Smart Refresh (checking timestamps)...
+[+] All files are up-to-date in cache. (Zero unnecessary disk I/O)
+
+=================================================================
+                     SCAN RESULTS                              
+=================================================================
+  Total files examined:    1,420
+  Songs indexed:           1,385
+    - Complete metadata:   1,210
+    - Incomplete / VLC:    175 (see 'Incomplete' tab)
+  Unindexed / other files: 35
+  Smart HDD Optimization:
+    - Unchanged cached:    1,420 files (Instant 0-seek)
+    - New files indexed:   0
+    - Modified re-indexed: 0
+    - Removed / deleted:   0
+  Scan duration:           0.15 seconds
+=================================================================
 ```
 
-### 2. Pass Folders via CLI Arguments
-You can specify one or more target folders directly:
+### 2. Pass Folders via CLI
 ```bash
-python main.py --folders "C:\Music" "D:\Soundtracks"
+python main.py --folders "C:\Music" "D:\AudioTracks"
 ```
 
-### 3. Headless / CLI-Only Mode (No GUI)
-To run automated indexing without opening the GUI player window:
+### 3. Force Full Re-Scan (Bypassing Cache)
+```bash
+python main.py -f "C:\Music" --full-scan
+```
+
+### 4. Headless Automation (No GUI)
 ```bash
 python main.py -f "C:\Music" --no-gui
 ```
 
-### 4. Custom JSON Output Paths
-```bash
-python main.py -f "C:\Music" --songs-out "my_library.json" --unindexed-out "skipped.json"
-```
-
 ---
 
-## Integrating Into Bigger Projects
+## Integrating Into Other Python Projects
 
-The application is structured as an independent, decoupled library (`media_scanner`). You can import any component directly into your own projects:
+The `media_scanner` package is completely decoupled and can be imported into your own web servers, background daemons, or custom GUIs:
 
-### 1. Headless Indexing Backend
+### 1. Fast Incremental Indexing in Background Tasks
 ```python
 from media_scanner import AudioIndexer, StorageManager
 
-# 1. Initialize indexer
-indexer = AudioIndexer()
+# 1. Load existing cache from JSON
+cached_songs, cached_unindexed, folders = StorageManager.load_cached_library("indexed_songs.json", "unindexed.json")
 
-# 2. Define an optional progress hook
-def progress_listener(current: int, total: int, filename: str):
-    print(f"Indexing [{current}/{total}]: {filename}")
+# 2. Initialize indexer with VLC enrichment enabled
+indexer = AudioIndexer(enable_vlc_enrichment=True)
 
-# 3. Scan directories
+# 3. Perform smart incremental scan
 result = indexer.scan_folders(
-    folder_paths=["C:/Music", "D:/Albums"],
-    recursive=True,
-    progress_callback=progress_listener,
+    folder_paths=["C:/Music"],
+    cached_songs=cached_songs,
+    cached_unindexed=cached_unindexed,
+    progress_callback=lambda cur, tot, name: print(f"[{cur}/{tot}] Indexing {name}"),
 )
 
-print(f"Indexed {result.song_count} songs ({result.unindexed_count} skipped).")
+print(f"Smart Scan Complete: {result.cached_files_count} cached, {result.new_files_count} new.")
 
-# 4. Save to JSON or database
-StorageManager.save_scan_result(result, "songs.json", "other.json")
-
-# Or iterate songs directly
-for song in result.songs:
-    print(f"{song.title} by {song.artist} ({song.duration_formatted})")
+# 4. Save updated state
+StorageManager.save_scan_result(result, "indexed_songs.json", "unindexed.json")
 ```
 
-### 2. Extracting Metadata from Single Files
+### 2. Inspecting Incomplete Tracks and LibVLC Fingerprinting
 ```python
-from media_scanner import MetadataExtractor
+from media_scanner import MetadataExtractor, VLCMetadataEnricher
 
-meta = MetadataExtractor.extract("C:/Music/song.mp3")
-print("Title:", meta.title)
-print("Artist:", meta.artist)
-print("Album:", meta.album)
-print("Duration:", meta.duration_formatted)
-print("Bitrate:", meta.bitrate_kbps, "kbps")
+meta = MetadataExtractor.extract("C:/Music/unknown_track.mp3")
+
+if meta.has_incomplete_metadata:
+    print("Missing fields:", meta.missing_fields)
+    # Trigger LibVLC deep parsing & fingerprinting
+    VLCMetadataEnricher.enrich(meta)
+    print("After VLC enrichment:", meta.title, "by", meta.artist)
+    print("Artwork detected:", meta.has_album_art)
 ```
 
-### 3. Audio Playback Engine (VLC / Qt)
+### 3. Audio Playback Engine (LibVLC / Qt)
 ```python
 from media_scanner import get_best_player
 
-# Instantiates VLCPlayer if libvlc is available, otherwise QtAudioPlayer
-player = get_best_player(preferred_backend="vlc")
+player = get_best_player("vlc")  # Uses libvlc.dll or falls back to QtMultimedia
 player.load("C:/Music/track.mp3")
-player.set_volume(85)
 player.play()
-
-# Query status
-print("Is playing:", player.is_playing())
-print("Position:", player.get_position(), "seconds")
 ```
 
-### 4. Embedding the Music Browser in an Existing PyQt App
+### 4. Embedding the Multi-Tab GUI Window
 ```python
-from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QApplication
 from media_scanner import StorageManager, MusicPlayerWindow
 
 app = QApplication([])
 songs = StorageManager.load_songs("indexed_songs.json")
+unindexed = StorageManager.load_unindexed("unindexed_files.json")
 
-# Open as a standalone window or embed as a widget
-player_win = MusicPlayerWindow(songs=songs)
-player_win.show()
+window = MusicPlayerWindow(songs=songs, unindexed=unindexed)
+window.show()
 app.exec()
 ```
 
 ---
 
-## Running Tests
-Run the included test suite to verify indexing, extraction, and player backends:
+## Testing
+Run the comprehensive test suite verifying metadata extraction, incremental HDD refresh, VLC enrichment, and GUI tabs:
 ```bash
 python -m unittest discover tests
 ```

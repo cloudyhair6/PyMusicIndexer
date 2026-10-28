@@ -1,13 +1,44 @@
 {
-  "metadata_version": "1.0",
-  "total_songs": 4,
+  "metadata_version": "1.1",
+  "total_songs": 5,
+  "incomplete_songs_count": 5,
   "scanned_folders": [
     "C:\\Users\\Will\\OneDrive\\github\\copilot cli\\python media scanning\\sample_music_library"
   ],
-  "generated_at": "2026-10-28T17:05:48.036504",
+  "generated_at": "2026-10-28T17:32:31.673227",
   "songs": [
     {
-      "file_path": "C:\\Users\\Will\\OneDrive\\github\\copilot cli\\python media scanning\\sample_music_library\\Pop\\dreamland.mp3",
+      "file_path": "c:\\users\\will\\onedrive\\github\\copilot cli\\python media scanning\\sample_music_library\\pop\\acoustic_sunset.wav",
+      "file_name": "acoustic_sunset.wav",
+      "file_size_bytes": 352952,
+      "file_size_human": "344.7 KB",
+      "extension": ".wav",
+      "format": "WAV",
+      "title": "Acoustic Sunset",
+      "artist": "Horizon Duo",
+      "album": "Golden Hour",
+      "album_artist": "Horizon Duo",
+      "genre": "Acoustic",
+      "year": "2026",
+      "track_number": null,
+      "duration_seconds": 2.0,
+      "duration_formatted": "00:02",
+      "bitrate_kbps": 1411,
+      "sample_rate_hz": 44100,
+      "channels": 2,
+      "last_modified": "2026-10-28T17:28:54.441135",
+      "mtime_timestamp": 1793208534.4411347,
+      "has_album_art": false,
+      "album_art_path": null,
+      "has_incomplete_metadata": true,
+      "missing_fields": [
+        "album_art"
+      ],
+      "vlc_fingerprinted": true,
+      "vlc_status": "VLC Parsed (No new tags)"
+    },
+    {
+      "file_path": "c:\\users\\will\\onedrive\\github\\copilot cli\\python media scanning\\sample_music_library\\pop\\dreamland.mp3",
       "file_name": "dreamland.mp3",
       "file_size_bytes": 20963,
       "file_size_human": "20.5 KB",
@@ -25,10 +56,19 @@
       "bitrate_kbps": 128,
       "sample_rate_hz": 44100,
       "channels": 2,
-      "last_modified": "2026-10-28T17:02:21.883884"
+      "last_modified": "2026-10-28T17:02:21.883884",
+      "mtime_timestamp": 1793206941.883884,
+      "has_album_art": false,
+      "album_art_path": null,
+      "has_incomplete_metadata": true,
+      "missing_fields": [
+        "album_art"
+      ],
+      "vlc_fingerprinted": true,
+      "vlc_status": "VLC Parsed (No new tags)"
     },
     {
-      "file_path": "C:\\Users\\Will\\OneDrive\\github\\copilot cli\\python media scanning\\sample_music_library\\Pop\\summer_vibes.wav",
+      "file_path": "c:\\users\\will\\onedrive\\github\\copilot cli\\python media scanning\\sample_music_library\\pop\\summer_vibes.wav",
       "file_name": "summer_vibes.wav",
       "file_size_bytes": 529344,
       "file_size_human": "516.9 KB",
@@ -46,10 +86,19 @@
       "bitrate_kbps": 1411,
       "sample_rate_hz": 44100,
       "channels": 2,
-      "last_modified": "2026-10-28T17:02:21.834175"
+      "last_modified": "2026-10-28T17:02:21.834175",
+      "mtime_timestamp": 1793206941.8341746,
+      "has_album_art": false,
+      "album_art_path": null,
+      "has_incomplete_metadata": true,
+      "missing_fields": [
+        "album_art"
+      ],
+      "vlc_fingerprinted": true,
+      "vlc_status": "VLC Parsed (No new tags)"
     },
     {
-      "file_path": "C:\\Users\\Will\\OneDrive\\github\\copilot cli\\python media scanning\\sample_music_library\\Rock\\electric_pulse.mp3",
+      "file_path": "c:\\users\\will\\onedrive\\github\\copilot cli\\python media scanning\\sample_music_library\\rock\\electric_pulse.mp3",
       "file_name": "electric_pulse.mp3",
       "file_size_bytes": 20971,
       "file_size_human": "20.5 KB",
@@ -67,10 +116,19 @@
       "bitrate_kbps": 128,
       "sample_rate_hz": 44100,
       "channels": 2,
-      "last_modified": "2026-10-28T17:02:21.881867"
+      "last_modified": "2026-10-28T17:02:21.881867",
+      "mtime_timestamp": 1793206941.8818672,
+      "has_album_art": false,
+      "album_art_path": null,
+      "has_incomplete_metadata": true,
+      "missing_fields": [
+        "album_art"
+      ],
+      "vlc_fingerprinted": true,
+      "vlc_status": "VLC Parsed (No new tags)"
     },
     {
-      "file_path": "C:\\Users\\Will\\OneDrive\\github\\copilot cli\\python media scanning\\sample_music_library\\Rock\\midnight_guitar.wav",
+      "file_path": "c:\\users\\will\\onedrive\\github\\copilot cli\\python media scanning\\sample_music_library\\rock\\midnight_guitar.wav",
       "file_name": "midnight_guitar.wav",
       "file_size_bytes": 441146,
       "file_size_human": "430.8 KB",
@@ -88,7 +146,16 @@
       "bitrate_kbps": 1411,
       "sample_rate_hz": 44100,
       "channels": 2,
-      "last_modified": "2026-10-28T17:02:21.880835"
+      "last_modified": "2026-10-28T17:02:21.880835",
+      "mtime_timestamp": 1793206941.8808346,
+      "has_album_art": false,
+      "album_art_path": null,
+      "has_incomplete_metadata": true,
+      "missing_fields": [
+        "album_art"
+      ],
+      "vlc_fingerprinted": true,
+      "vlc_status": "VLC Parsed (No new tags)"
     }
   ]
 }

@@ -50,6 +50,12 @@ def parse_arguments():
         help="Preferred audio player engine for GUI (default: vlc).",
     )
 
+    parser.add_argument(
+        "--full-scan",
+        action="store_true",
+        help="Ignore cached metadata and force full re-indexing of all files.",
+    )
+
     return parser.parse_args()
 
 
@@ -62,6 +68,7 @@ def main():
             unindexed_json_path=args.unindexed_out,
             launch_gui_after_scan=not args.no_gui,
             preferred_player_engine=args.engine,
+            force_full_scan=args.full_scan,
         )
     except KeyboardInterrupt:
         print("\n\n[!] Operation cancelled by user.")

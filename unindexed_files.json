@@ -1,13 +1,13 @@
 {
-  "metadata_version": "1.0",
+  "metadata_version": "1.1",
   "total_unindexed": 4,
   "scanned_folders": [
     "C:\\Users\\Will\\OneDrive\\github\\copilot cli\\python media scanning\\sample_music_library"
   ],
-  "generated_at": "2026-10-28T17:05:48.036504",
+  "generated_at": "2026-10-28T17:32:31.673227",
   "files": [
     {
-      "file_path": "C:\\Users\\Will\\OneDrive\\github\\copilot cli\\python media scanning\\sample_music_library\\album_cover.jpg",
+      "file_path": "c:\\users\\will\\onedrive\\github\\copilot cli\\python media scanning\\sample_music_library\\album_cover.jpg",
       "file_name": "album_cover.jpg",
       "file_size_bytes": 22,
       "file_size_human": "22 B",
@@ -15,10 +15,11 @@
       "is_song": false,
       "reason": "Non-audio file extension (.jpg)",
       "error_details": null,
-      "last_modified": "2026-10-28T17:02:21.885391"
+      "last_modified": "2026-10-28T17:02:21.885391",
+      "mtime_timestamp": 1793206941.8853908
     },
     {
-      "file_path": "C:\\Users\\Will\\OneDrive\\github\\copilot cli\\python media scanning\\sample_music_library\\Documents\\tracklist.txt",
+      "file_path": "c:\\users\\will\\onedrive\\github\\copilot cli\\python media scanning\\sample_music_library\\documents\\tracklist.txt",
       "file_name": "tracklist.txt",
       "file_size_bytes": 56,
       "file_size_human": "56 B",
@@ -26,10 +27,11 @@
       "is_song": false,
       "reason": "Non-audio file extension (.txt)",
       "error_details": null,
-      "last_modified": "2026-10-28T17:02:21.885391"
+      "last_modified": "2026-10-28T17:02:21.885391",
+      "mtime_timestamp": 1793206941.8853908
     },
     {
-      "file_path": "C:\\Users\\Will\\OneDrive\\github\\copilot cli\\python media scanning\\sample_music_library\\Pop\\lyrics.pdf",
+      "file_path": "c:\\users\\will\\onedrive\\github\\copilot cli\\python media scanning\\sample_music_library\\pop\\lyrics.pdf",
       "file_name": "lyrics.pdf",
       "file_size_bytes": 29,
       "file_size_human": "29 B",
@@ -37,10 +39,11 @@
       "is_song": false,
       "reason": "Non-audio file extension (.pdf)",
       "error_details": null,
-      "last_modified": "2026-10-28T17:02:21.886431"
+      "last_modified": "2026-10-28T17:02:21.886431",
+      "mtime_timestamp": 1793206941.8864312
     },
     {
-      "file_path": "C:\\Users\\Will\\OneDrive\\github\\copilot cli\\python media scanning\\sample_music_library\\Rock\\broken_recording.mp3",
+      "file_path": "c:\\users\\will\\onedrive\\github\\copilot cli\\python media scanning\\sample_music_library\\rock\\broken_recording.mp3",
       "file_name": "broken_recording.mp3",
       "file_size_bytes": 51,
       "file_size_human": "51 B",
@@ -48,7 +51,8 @@
       "is_song": false,
       "reason": "Corrupted audio or metadata extraction failure",
       "error_details": "Corrupted or invalid MP3 file: No valid ID3 tags or MPEG audio frames found.",
-      "last_modified": "2026-10-28T17:02:21.883884"
+      "last_modified": "2026-10-28T17:02:21.883884",
+      "mtime_timestamp": 1793206941.883884
     }
   ]
 }

@@ -1,9 +1,12 @@
 """
 Command-Line Interface Module
 =============================
-Interactive console workflow that prompts for folders, displays selections,
-renders a terminal progress bar during indexing, outputs dual JSON files,
-lists unindexed/failed files in the console, and launches the player GUI.
+Interactive console workflow with:
+- Smart HDD cache check and folder memory
+- In-place terminal progress bar for newly discovered/modified files
+- Dual JSON persistence
+- Failure breakdown in cmd
+- Multi-tab GUI launch with VLC fingerprint inspector and failed files page
 """
 
 from __future__ import annotations
@@ -11,9 +14,8 @@ from __future__ import annotations
 import os
 import sys
 import shutil
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
-# Ensure standard output can handle Unicode without crashing on Windows cmd cp1252
 if hasattr(sys.stdout, "reconfigure"):
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -46,9 +48,7 @@ def render_progress_bar(current: int, total: int, current_filename: str, bar_len
 
     bar = "█" * filled + "░" * (bar_length - filled)
     
-    # Get terminal width safely
     term_width = shutil.get_terminal_size((80, 24)).columns
-    
     prefix = f"\rProgress: [{bar}] {percent:5.1f}% ({current}/{total})"
     space_left = term_width - len(prefix) - 10
     
@@ -61,24 +61,36 @@ def render_progress_bar(current: int, total: int, current_filename: str, bar_len
     else:
         msg = prefix
 
-    # Pad with spaces to clear previous line characters
     padded = msg.ljust(term_width - 1)
     sys.stdout.write(padded)
     sys.stdout.flush()
 
 
-def prompt_folder_selection() -> List[str]:
+def prompt_folder_selection(remembered_folders: Optional[List[str]] = None) -> List[str]:
     """
-    Interactive terminal prompt allowing the user to select one or multiple folders.
+    Interactive terminal prompt allowing the user to select one or multiple folders,
+    with smart recall of previously scanned directories.
     """
     print("\n" + "=" * 65)
     print("           AUDIO DIRECTORY SELECTION (CMD INTERFACE)           ")
     print("=" * 65)
+
+    if remembered_folders:
+        print("Previous folders were found in the library cache:")
+        for idx, f in enumerate(remembered_folders, 1):
+            print(f"  [{idx}] {f}")
+        print("-" * 65)
+        choice = input("Use these folders for a Smart Refresh? [Y/n]: ").strip().lower()
+        if choice in ("", "y", "yes"):
+            valid = [f for f in remembered_folders if os.path.isdir(f)]
+            if valid:
+                return valid
+
     print("Enter the full path to each folder you want to index.")
     print("Tips:")
     print("  - You can enter multiple directories one by one.")
-    print("  - Quotes around paths (e.g. \"C:\\My Music\") will be automatically handled.")
-    print("  - Press [Enter] on an empty line when you have finished adding folders.")
+    print("  - Quotes around paths (e.g. \"C:\\My Music\") will be handled automatically.")
+    print("  - Press [Enter] on an empty line when finished adding folders.")
     print("-" * 65)
 
     selected_folders: List[str] = []
@@ -87,7 +99,6 @@ def prompt_folder_selection() -> List[str]:
         prompt_num = len(selected_folders) + 1
         raw_input_path = input(f"Enter folder #{prompt_num} (or press Enter to finish): ").strip()
 
-        # Check for finish signal
         if not raw_input_path:
             if selected_folders:
                 break
@@ -95,7 +106,6 @@ def prompt_folder_selection() -> List[str]:
                 print("  [!] Please specify at least one folder before continuing.")
                 continue
 
-        # Strip surrounding quotes if dragged-and-dropped into cmd
         clean_path = raw_input_path.strip('\"\'')
         abs_path = os.path.abspath(clean_path)
 
@@ -114,9 +124,8 @@ def prompt_folder_selection() -> List[str]:
 
 
 def display_selected_folders(folders: List[str]):
-    """Print the chosen folders clearly in the terminal."""
     print("\n" + "=" * 65)
-    print("                     SELECTED FOLDERS                          ")
+    print("                     TARGET FOLDERS                            ")
     print("=" * 65)
     for idx, folder in enumerate(folders, start=1):
         try:
@@ -128,8 +137,7 @@ def display_selected_folders(folders: List[str]):
     print("=" * 65 + "\n")
 
 
-def print_failed_files_report(unindexed_files: List[FileScanStatus], max_display: int = 30):
-    """Display non-songs and files that could not be indexed in cmd."""
+def print_failed_files_report(unindexed_files: List[FileScanStatus], max_display: int = 25):
     if not unindexed_files:
         print("\n[+] All scanned files were successfully identified and indexed as songs!")
         return
@@ -148,7 +156,7 @@ def print_failed_files_report(unindexed_files: List[FileScanStatus], max_display
 
     if len(unindexed_files) > max_display:
         remainder = len(unindexed_files) - max_display
-        print(f"  ... and {remainder} more files (see unindexed JSON for complete list).")
+        print(f"  ... and {remainder} more files (see 'Unindexed & Failed' tab in GUI).")
 
     print("-" * 65)
 
@@ -159,63 +167,91 @@ def run_cli_flow(
     unindexed_json_path: str = DEFAULT_UNINDEXED_JSON,
     launch_gui_after_scan: bool = True,
     preferred_player_engine: str = "vlc",
+    force_full_scan: bool = False,
 ) -> ScanResult:
     """
-    Main CLI execution pipeline:
-    1. Select folders
-    2. Show folders
-    3. Index files with progress bar
-    4. Save to 2 separate JSON files
-    5. Show unindexed / failed files
-    6. Launch the GUI player
+    Main CLI execution pipeline with Smart HDD Refresh:
+    1. Loads cached library (remembers folders and prior metadata)
+    2. Fast scandir compares timestamps without opening audio files
+    3. Terminal progress bar indexes only new or modified files
+    4. Saves updated JSON catalogs
+    5. Shows console report
+    6. Launches multi-page GUI
     """
-    # Step 1 & 2: Folder selection and display
+    # 1. Load existing cache
+    cached_songs, cached_unindexed, remembered_folders = StorageManager.load_cached_library(
+        songs_filepath=songs_json_path,
+        unindexed_filepath=unindexed_json_path,
+    )
+
+    if force_full_scan:
+        cached_songs = {}
+        cached_unindexed = {}
+
+    # 2. Determine target folders
     if not input_folders:
-        folders = prompt_folder_selection()
+        folders = prompt_folder_selection(remembered_folders if cached_songs else None)
     else:
         folders = [os.path.abspath(f.strip('\"\'')) for f in input_folders if os.path.isdir(f.strip('\"\''))]
         if not folders:
             print("[!] None of the provided folder paths are valid directories.")
-            folders = prompt_folder_selection()
+            folders = prompt_folder_selection(remembered_folders)
 
     display_selected_folders(folders)
 
-    # Step 3: Indexing with cmd progress bar
-    print("Starting indexing...")
+    # 3. Smart Indexing (HDD optimized)
+    print("Initiating Smart Refresh (checking timestamps)...")
     indexer = AudioIndexer()
 
     def on_progress(current: int, total: int, filename: str):
         render_progress_bar(current, total, filename)
 
-    result = indexer.scan_folders(folders, recursive=True, progress_callback=on_progress)
-    print("\n")  # Newline after progress bar completes
+    result = indexer.scan_folders(
+        folders,
+        recursive=True,
+        cached_songs=cached_songs,
+        cached_unindexed=cached_unindexed,
+        progress_callback=on_progress,
+    )
 
-    # Step 4: Save JSON files
+    if result.new_files_count > 0 or result.modified_files_count > 0:
+        print("\n")  # Newline after progress bar completes
+    else:
+        print("[+] All files are up-to-date in cache. (Zero unnecessary disk I/O)")
+
+    # 4. Save JSON files
     songs_file, unindexed_file = StorageManager.save_scan_result(
         result=result,
         songs_filepath=songs_json_path,
         unindexed_filepath=unindexed_json_path,
     )
 
-    print("=" * 65)
+    print("\n" + "=" * 65)
     print("                     SCAN RESULTS                              ")
     print("=" * 65)
     print(f"  Total files examined:    {result.total_files_examined}")
     print(f"  Songs indexed:           {result.song_count}")
+    print(f"    - Complete metadata:   {result.song_count - result.incomplete_count}")
+    print(f"    - Incomplete / VLC:    {result.incomplete_count} (see 'Incomplete' tab)")
     print(f"  Unindexed / other files: {result.unindexed_count}")
-    print(f"  Duration:                {result.elapsed_time_seconds:.2f} seconds")
+    print(f"  Smart HDD Optimization:")
+    print(f"    - Unchanged cached:    {result.cached_files_count} files (Instant 0-seek)")
+    print(f"    - New files indexed:   {result.new_files_count}")
+    print(f"    - Modified re-indexed: {result.modified_files_count}")
+    print(f"    - Removed / deleted:   {result.deleted_files_count}")
+    print(f"  Scan duration:           {result.elapsed_time_seconds:.2f} seconds")
     print("-" * 65)
-    print(f"  [+] Songs JSON saved to:     {songs_file}")
-    print(f"  [+] Unindexed JSON saved to: {unindexed_file}")
+    print(f"  [+] Songs JSON:     {songs_file}")
+    print(f"  [+] Unindexed JSON: {unindexed_file}")
     print("=" * 65)
 
-    # Step 5: Show any files that couldn't be got
+    # 5. Display failure list in CMD
     print_failed_files_report(result.unindexed_files)
 
-    # Step 6: Launch GUI player
+    # 6. Launch GUI player with all 3 pages
     if launch_gui_after_scan:
-        print("\n[+] Launching GUI Music Player & Search...")
+        print("\n[+] Launching Multi-Tab Music Player & Inspector...")
         print("    (Close the GUI window when finished)")
-        launch_gui(result.songs, preferred_engine=preferred_player_engine)
+        launch_gui(result.songs, unindexed=result.unindexed_files, preferred_engine=preferred_player_engine)
 
     return result

@@ -1,18 +1,21 @@
 """
-Metadata Extraction Module
-==========================
+Metadata Extraction & VLC Fingerprinting Module
+===============================================
 Extracts audio tags and stream properties from various audio formats.
-Includes built-in pure-Python parsers for MP3, WAV, FLAC, OGG, and M4A,
-with optional automatic escalation to `mutagen` or `tinytag` if installed.
+Includes pure-Python parsers for MP3, WAV, FLAC, OGG, and M4A,
+artwork detection, incomplete metadata classification, and
+LibVLC media parsing and fingerprinting integration.
 """
 
 from __future__ import annotations
 
 import os
+import sys
 import struct
 import datetime
-from dataclasses import dataclass, asdict
-from typing import Dict, Any, Optional, Tuple
+import ctypes
+from dataclasses import dataclass, asdict, field
+from typing import Dict, Any, Optional, Tuple, List
 
 # Check for optional third-party libraries
 _MUTAGEN_AVAILABLE = False
@@ -20,7 +23,6 @@ _TINYTAG_AVAILABLE = False
 
 try:
     import mutagen
-    from mutagen.easyid3 import EasyID3
     _MUTAGEN_AVAILABLE = True
 except ImportError:
     pass
@@ -36,6 +38,13 @@ AUDIO_EXTENSIONS = {
     ".mp3", ".wav", ".flac", ".ogg", ".oga",
     ".m4a", ".aac", ".wma", ".aiff", ".aif",
     ".opus", ".alac", ".ape", ".mid", ".midi"
+}
+
+COVER_FILENAMES = {
+    "cover.jpg", "cover.png", "cover.jpeg",
+    "folder.jpg", "folder.png",
+    "album.jpg", "album.png",
+    "front.jpg", "front.png"
 }
 
 
@@ -86,6 +95,15 @@ class AudioMetadata:
     sample_rate_hz: Optional[int]
     channels: Optional[int]
     last_modified: str
+    mtime_timestamp: float = 0.0
+
+    # Incomplete metadata & artwork attributes
+    has_album_art: bool = False
+    album_art_path: Optional[str] = None
+    has_incomplete_metadata: bool = False
+    missing_fields: List[str] = field(default_factory=list)
+    vlc_fingerprinted: bool = False
+    vlc_status: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert metadata to a serializable dictionary."""
@@ -94,7 +112,16 @@ class AudioMetadata:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "AudioMetadata":
         """Reconstruct AudioMetadata instance from dictionary."""
-        return cls(**data)
+        # Ensure compatibility with older json caches
+        safe_data = dict(data)
+        safe_data.setdefault("mtime_timestamp", 0.0)
+        safe_data.setdefault("has_album_art", False)
+        safe_data.setdefault("album_art_path", None)
+        safe_data.setdefault("has_incomplete_metadata", False)
+        safe_data.setdefault("missing_fields", [])
+        safe_data.setdefault("vlc_fingerprinted", False)
+        safe_data.setdefault("vlc_status", "")
+        return cls(**safe_data)
 
 
 class MetadataExtractor:
@@ -102,16 +129,53 @@ class MetadataExtractor:
 
     @classmethod
     def is_audio_file(cls, file_path: str) -> bool:
-        """Check if file extension is considered an audio format."""
         ext = os.path.splitext(file_path)[1].lower()
         return ext in AUDIO_EXTENSIONS
+
+    @classmethod
+    def find_folder_art(cls, file_path: str) -> Optional[str]:
+        """Check if folder contains common album cover images."""
+        try:
+            folder = os.path.dirname(os.path.abspath(file_path))
+            for item in os.listdir(folder):
+                if item.lower() in COVER_FILENAMES:
+                    art_path = os.path.join(folder, item)
+                    if os.path.isfile(art_path):
+                        return art_path
+        except Exception:
+            pass
+        return None
+
+    @classmethod
+    def evaluate_completeness(cls, meta: AudioMetadata) -> None:
+        """Determines if the song has missing/incomplete metadata."""
+        missing = []
+        stem = os.path.splitext(meta.file_name)[0]
+
+        # Check title
+        if not meta.title or meta.title.strip() == "" or meta.title.strip().lower() == stem.lower():
+            missing.append("title")
+
+        # Check artist
+        if not meta.artist or meta.artist.strip() == "" or meta.artist.strip().lower() in ("unknown", "unknown artist", "various"):
+            missing.append("artist")
+
+        # Check album
+        if not meta.album or meta.album.strip() == "" or meta.album.strip().lower() in ("unknown", "unknown album"):
+            missing.append("album")
+
+        # Check album artwork
+        if not meta.has_album_art:
+            missing.append("album_art")
+
+        meta.missing_fields = missing
+        meta.has_incomplete_metadata = len(missing) > 0
 
     @classmethod
     def extract(cls, file_path: str) -> AudioMetadata:
         """
         Extract metadata from given audio file.
         Uses mutagen/tinytag if available, otherwise pure Python parser.
-        Raises ValueError or IOError if file is corrupted or not a valid song.
         """
         abs_path = os.path.abspath(file_path)
         if not os.path.isfile(abs_path):
@@ -119,7 +183,8 @@ class MetadataExtractor:
 
         file_stat = os.stat(abs_path)
         file_size = file_stat.st_size
-        mod_time = datetime.datetime.fromtimestamp(file_stat.st_mtime).isoformat()
+        mtime = file_stat.st_mtime
+        mod_time = datetime.datetime.fromtimestamp(mtime).isoformat()
         file_name = os.path.basename(abs_path)
         stem, ext = os.path.splitext(file_name)
         ext_lower = ext.lower()
@@ -128,21 +193,37 @@ class MetadataExtractor:
             raise ValueError(f"Unsupported audio format extension: {ext_lower}")
 
         # Try mutagen if available
+        meta = None
         if _MUTAGEN_AVAILABLE:
             try:
-                return cls._extract_with_mutagen(abs_path, file_stat, ext_lower)
+                meta = cls._extract_with_mutagen(abs_path, file_stat, ext_lower)
             except Exception:
-                pass  # Fallback to pure Python
+                meta = None
 
         # Try tinytag if available
-        if _TINYTAG_AVAILABLE:
+        if meta is None and _TINYTAG_AVAILABLE:
             try:
-                return cls._extract_with_tinytag(abs_path, file_stat, ext_lower)
+                meta = cls._extract_with_tinytag(abs_path, file_stat, ext_lower)
             except Exception:
-                pass  # Fallback to pure Python
+                meta = None
 
         # Built-in pure Python extractors
-        return cls._extract_pure_python(abs_path, file_stat, ext_lower)
+        if meta is None:
+            meta = cls._extract_pure_python(abs_path, file_stat, ext_lower)
+
+        meta.mtime_timestamp = mtime
+
+        # Check for album art in the directory if not embedded
+        if not meta.has_album_art:
+            folder_art = cls.find_folder_art(abs_path)
+            if folder_art:
+                meta.has_album_art = True
+                meta.album_art_path = folder_art
+
+        # Evaluate if metadata is incomplete
+        cls.evaluate_completeness(meta)
+
+        return meta
 
     # ------------------------------------------------------------------
     # Optional Third-Party Adapters
@@ -181,6 +262,13 @@ class MetadataExtractor:
         year = get_tag(["date", "year", "TDRC", "TYER"]) or None
         track = get_tag(["tracknumber", "TRCK"]) or None
 
+        # Check embedded cover
+        has_art = False
+        if hasattr(audio, "pictures") and len(audio.pictures) > 0:
+            has_art = True
+        elif any(k.startswith("APIC") for k in tags.keys()):
+            has_art = True
+
         return AudioMetadata(
             file_path=path,
             file_name=os.path.basename(path),
@@ -201,11 +289,13 @@ class MetadataExtractor:
             sample_rate_hz=sample_rate,
             channels=channels,
             last_modified=datetime.datetime.fromtimestamp(stat_res.st_mtime).isoformat(),
+            mtime_timestamp=stat_res.st_mtime,
+            has_album_art=has_art,
         )
 
     @classmethod
     def _extract_with_tinytag(cls, path: str, stat_res: os.stat_result, ext: str) -> AudioMetadata:
-        tag = tinytag.TinyTag.get(path)
+        tag = tinytag.TinyTag.get(path, image=True)
         title = tag.title or os.path.splitext(os.path.basename(path))[0]
         artist = tag.artist or "Unknown Artist"
         album = tag.album or "Unknown Album"
@@ -231,6 +321,8 @@ class MetadataExtractor:
             sample_rate_hz=tag.samplerate,
             channels=tag.channels,
             last_modified=datetime.datetime.fromtimestamp(stat_res.st_mtime).isoformat(),
+            mtime_timestamp=stat_res.st_mtime,
+            has_album_art=bool(tag.get_image()),
         )
 
     # ------------------------------------------------------------------
@@ -238,7 +330,6 @@ class MetadataExtractor:
     # ------------------------------------------------------------------
     @classmethod
     def _extract_pure_python(cls, path: str, stat_res: os.stat_result, ext: str) -> AudioMetadata:
-        """Route to format-specific pure-Python parser."""
         if ext == ".wav":
             return cls._parse_wav(path, stat_res, ext)
         elif ext == ".mp3":
@@ -254,7 +345,6 @@ class MetadataExtractor:
 
     @classmethod
     def _parse_wav(cls, path: str, stat_res: os.stat_result, ext: str) -> AudioMetadata:
-        """Parse standard WAV / RIFF header and optional INFO chunk."""
         import wave
 
         title = os.path.splitext(os.path.basename(path))[0]
@@ -273,13 +363,11 @@ class MetadataExtractor:
                 channels = wf.getnchannels()
                 sample_rate = wf.getframerate()
                 n_frames = wf.getnframes()
-                sampwidth = wf.getsampwidth()
                 if sample_rate > 0:
                     duration = n_frames / float(sample_rate)
                 if duration > 0:
                     bitrate = int((stat_res.st_size * 8) / (duration * 1000))
         except Exception as e:
-            # Try manual RIFF parse
             riff_info = cls._parse_riff_info_tags(path)
             if riff_info.get("duration"):
                 duration = riff_info["duration"]
@@ -288,7 +376,6 @@ class MetadataExtractor:
             else:
                 raise ValueError(f"Corrupted or invalid WAV file: {e}")
 
-        # Check for RIFF INFO tags
         tags = cls._parse_riff_info_tags(path)
         title = tags.get("INAM") or title
         artist = tags.get("IART") or artist
@@ -317,11 +404,11 @@ class MetadataExtractor:
             sample_rate_hz=sample_rate,
             channels=channels,
             last_modified=datetime.datetime.fromtimestamp(stat_res.st_mtime).isoformat(),
+            mtime_timestamp=stat_res.st_mtime,
         )
 
     @classmethod
     def _parse_riff_info_tags(cls, path: str) -> Dict[str, Any]:
-        """Extract INFO list chunk tags from RIFF file."""
         tags = {}
         try:
             with open(path, "rb") as f:
@@ -337,7 +424,7 @@ class MetadataExtractor:
                     if chunk_id == b"fmt ":
                         fmt_data = f.read(chunk_size)
                         if len(fmt_data) >= 16:
-                            audio_format, channels, sample_rate, byte_rate, block_align, bits_per_sample = struct.unpack("<HHIIHH", fmt_data[:16])
+                            _, channels, sample_rate, byte_rate, _, _ = struct.unpack("<HHIIHH", fmt_data[:16])
                             tags["channels"] = channels
                             tags["sample_rate"] = sample_rate
                             tags["bitrate"] = int((byte_rate * 8) // 1000)
@@ -374,7 +461,6 @@ class MetadataExtractor:
 
     @classmethod
     def _parse_mp3(cls, path: str, stat_res: os.stat_result, ext: str) -> AudioMetadata:
-        """Parse MP3 ID3v2, ID3v1, and MPEG frame headers."""
         title = os.path.splitext(os.path.basename(path))[0]
         artist = "Unknown Artist"
         album = "Unknown Album"
@@ -386,8 +472,10 @@ class MetadataExtractor:
         sample_rate = None
         channels = None
         duration = 0.0
+        has_art = False
 
-        id3v2_tags, audio_offset = cls._parse_id3v2(path)
+        id3v2_tags, audio_offset, has_apic = cls._parse_id3v2(path)
+        has_art = has_apic
         if id3v2_tags:
             title = id3v2_tags.get("TIT2") or id3v2_tags.get("TT2") or title
             artist = id3v2_tags.get("TPE1") or id3v2_tags.get("TP1") or artist
@@ -397,22 +485,19 @@ class MetadataExtractor:
             year = id3v2_tags.get("TDRC") or id3v2_tags.get("TYER") or id3v2_tags.get("TYE") or None
             track = id3v2_tags.get("TRCK") or id3v2_tags.get("TRK") or None
 
-        # Check ID3v1 fallback if fields are empty
-        if artist == "Unknown Artist" or album == "Unknown Album":
-            id3v1_tags = cls._parse_id3v1(path)
-            if id3v1_tags:
-                if title == os.path.splitext(os.path.basename(path))[0] and id3v1_tags.get("title"):
-                    title = id3v1_tags["title"]
-                if artist == "Unknown Artist" and id3v1_tags.get("artist"):
-                    artist = id3v1_tags["artist"]
-                if album == "Unknown Album" and id3v1_tags.get("album"):
-                    album = id3v1_tags["album"]
-                if not year and id3v1_tags.get("year"):
-                    year = id3v1_tags["year"]
-                if not track and id3v1_tags.get("track"):
-                    track = id3v1_tags["track"]
+        id3v1_tags = cls._parse_id3v1(path)
+        if id3v1_tags:
+            if title == os.path.splitext(os.path.basename(path))[0] and id3v1_tags.get("title"):
+                title = id3v1_tags["title"]
+            if artist == "Unknown Artist" and id3v1_tags.get("artist"):
+                artist = id3v1_tags["artist"]
+            if album == "Unknown Album" and id3v1_tags.get("album"):
+                album = id3v1_tags["album"]
+            if not year and id3v1_tags.get("year"):
+                year = id3v1_tags["year"]
+            if not track and id3v1_tags.get("track"):
+                track = id3v1_tags["track"]
 
-        # Parse MPEG Audio Frame Header to compute duration, bitrate, sample rate
         mp3_props = cls._parse_mpeg_frame_headers(path, audio_offset, stat_res.st_size)
         if mp3_props:
             duration = mp3_props.get("duration", 0.0)
@@ -446,38 +531,38 @@ class MetadataExtractor:
             sample_rate_hz=sample_rate,
             channels=channels,
             last_modified=datetime.datetime.fromtimestamp(stat_res.st_mtime).isoformat(),
+            mtime_timestamp=stat_res.st_mtime,
+            has_album_art=has_art,
         )
 
     @classmethod
-    def _parse_id3v2(cls, path: str) -> Tuple[Dict[str, str], int]:
-        """Extract ID3v2 tags and return tag dictionary and audio data start offset."""
+    def _parse_id3v2(cls, path: str) -> Tuple[Dict[str, str], int, bool]:
         tags = {}
         audio_offset = 0
+        has_apic = False
         try:
             with open(path, "rb") as f:
                 header = f.read(10)
                 if len(header) < 10 or header[:3] != b"ID3":
-                    return tags, 0
+                    return tags, 0, False
 
                 version_major = header[3]
                 flags = header[5]
-                # Syncsafe integer for ID3v2 size
                 tag_size = ((header[6] & 0x7F) << 21) | ((header[7] & 0x7F) << 14) | ((header[8] & 0x7F) << 7) | (header[9] & 0x7F)
                 audio_offset = 10 + tag_size
-                if flags & 0x10:  # Footer present
+                if flags & 0x10:
                     audio_offset += 10
 
                 tag_data = f.read(tag_size)
                 pos = 0
 
-                # Extended header check
                 if flags & 0x20 and len(tag_data) >= 4:
                     ext_size = struct.unpack(">I", tag_data[:4])[0]
                     pos += ext_size
 
                 while pos < len(tag_data) - 10:
                     if tag_data[pos] == 0:
-                        break  # Padding reached
+                        break
 
                     if version_major == 2:
                         frame_id = tag_data[pos:pos+3].decode("ascii", errors="ignore")
@@ -502,7 +587,9 @@ class MetadataExtractor:
                     raw_content = tag_data[pos:pos+frame_size]
                     pos += frame_size
 
-                    # Text frame parsing
+                    if frame_id in ("APIC", "PIC"):
+                        has_apic = True
+
                     if frame_id.startswith("T") and frame_id not in ("TXXX", "TX") and len(raw_content) > 1:
                         encoding = raw_content[0]
                         data = raw_content[1:]
@@ -513,8 +600,6 @@ class MetadataExtractor:
                                 val = data.decode("utf-16", errors="ignore")
                             elif encoding == 2:
                                 val = data.decode("utf-16-be", errors="ignore")
-                            elif encoding == 3:
-                                val = data.decode("utf-8", errors="ignore")
                             else:
                                 val = data.decode("utf-8", errors="ignore")
                             tags[frame_id] = val.strip("\x00").strip()
@@ -523,11 +608,10 @@ class MetadataExtractor:
         except Exception:
             pass
 
-        return tags, audio_offset
+        return tags, audio_offset, has_apic
 
     @classmethod
     def _parse_id3v1(cls, path: str) -> Dict[str, str]:
-        """Extract ID3v1 trailer tags (last 128 bytes)."""
         tags = {}
         try:
             with open(path, "rb") as f:
@@ -546,10 +630,8 @@ class MetadataExtractor:
 
     @classmethod
     def _parse_mpeg_frame_headers(cls, path: str, start_offset: int, file_size: int) -> Optional[Dict[str, Any]]:
-        """Scan for first valid MPEG audio syncword and calculate properties."""
         bitrate_map_v1_l3 = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0]
         samplerate_map_v1 = [44100, 48000, 32000, 0]
-        samplerate_map_v2 = [22050, 24000, 16000, 0]
 
         res = {"found": False, "duration": 0.0, "bitrate": 128, "sample_rate": 44100, "channels": 2}
         found_sync = False
@@ -561,8 +643,8 @@ class MetadataExtractor:
                 while idx < len(chunk) - 4:
                     if chunk[idx] == 0xFF and (chunk[idx+1] & 0xE0) == 0xE0:
                         header = chunk[idx:idx+4]
-                        version_id = (header[1] >> 3) & 0x03  # 3=MPEG1, 2=MPEG2, 0=MPEG2.5
-                        layer_id = (header[1] >> 1) & 0x03    # 1=Layer3
+                        version_id = (header[1] >> 3) & 0x03
+                        layer_id = (header[1] >> 1) & 0x03
                         bitrate_idx = (header[2] >> 4) & 0x0F
                         sr_idx = (header[2] >> 2) & 0x03
                         channel_mode = (header[3] >> 6) & 0x03
@@ -588,7 +670,6 @@ class MetadataExtractor:
 
     @classmethod
     def _parse_flac(cls, path: str, stat_res: os.stat_result, ext: str) -> AudioMetadata:
-        """Parse native FLAC streaminfo and Vorbis comment block."""
         title = os.path.splitext(os.path.basename(path))[0]
         artist = "Unknown Artist"
         album = "Unknown Album"
@@ -600,6 +681,7 @@ class MetadataExtractor:
         sample_rate = 44100
         channels = 2
         bitrate = None
+        has_art = False
 
         with open(path, "rb") as f:
             magic = f.read(4)
@@ -633,6 +715,8 @@ class MetadataExtractor:
                     genre = comments.get("GENRE") or genre
                     year = comments.get("DATE") or comments.get("YEAR") or None
                     track = comments.get("TRACKNUMBER") or None
+                elif block_type == 6:  # PICTURE
+                    has_art = True
 
                 if is_last:
                     break
@@ -657,11 +741,12 @@ class MetadataExtractor:
             sample_rate_hz=sample_rate,
             channels=channels,
             last_modified=datetime.datetime.fromtimestamp(stat_res.st_mtime).isoformat(),
+            mtime_timestamp=stat_res.st_mtime,
+            has_album_art=has_art,
         )
 
     @classmethod
     def _parse_vorbis_comment_block(cls, data: bytes) -> Dict[str, str]:
-        """Parse standard Vorbis Comment block."""
         tags = {}
         try:
             pos = 0
@@ -685,7 +770,6 @@ class MetadataExtractor:
 
     @classmethod
     def _parse_ogg(cls, path: str, stat_res: os.stat_result, ext: str) -> AudioMetadata:
-        """Parse OGG file header and vorbis comments."""
         title = os.path.splitext(os.path.basename(path))[0]
         artist = "Unknown Artist"
         album = "Unknown Album"
@@ -700,7 +784,6 @@ class MetadataExtractor:
             if not chunk.startswith(b"OggS"):
                 raise ValueError("Not a valid Ogg file (missing OggS signature)")
 
-            # Scan for vorbis comment header (b"\x03vorbis")
             pos = chunk.find(b"\x03vorbis")
             if pos != -1:
                 comment_data = chunk[pos+7:]
@@ -733,11 +816,11 @@ class MetadataExtractor:
             sample_rate_hz=44100,
             channels=2,
             last_modified=datetime.datetime.fromtimestamp(stat_res.st_mtime).isoformat(),
+            mtime_timestamp=stat_res.st_mtime,
         )
 
     @classmethod
     def _parse_m4a(cls, path: str, stat_res: os.stat_result, ext: str) -> AudioMetadata:
-        """Parse M4A / MP4 ISO base media atoms for metadata."""
         title = os.path.splitext(os.path.basename(path))[0]
         artist = "Unknown Artist"
         album = "Unknown Album"
@@ -746,13 +829,13 @@ class MetadataExtractor:
         year = None
         track = None
         duration = 0.0
+        has_art = False
 
         with open(path, "rb") as f:
             data = f.read(min(stat_res.st_size, 262144))
             if b"ftyp" not in data[:32]:
                 raise ValueError("Not a valid MP4/M4A file (missing ftyp atom)")
 
-            # Check for mvhd atom to extract duration
             mvhd_idx = data.find(b"mvhd")
             if mvhd_idx != -1 and mvhd_idx + 24 <= len(data):
                 version = data[mvhd_idx+4]
@@ -777,6 +860,8 @@ class MetadataExtractor:
             album = get_atom_str(b"\xa9alb") or album
             year = get_atom_str(b"\xa9day") or None
             genre = get_atom_str(b"\xa9gen") or genre
+            if b"covr" in data:
+                has_art = True
 
         return AudioMetadata(
             file_path=path,
@@ -798,11 +883,12 @@ class MetadataExtractor:
             sample_rate_hz=44100,
             channels=2,
             last_modified=datetime.datetime.fromtimestamp(stat_res.st_mtime).isoformat(),
+            mtime_timestamp=stat_res.st_mtime,
+            has_album_art=has_art,
         )
 
     @classmethod
     def _parse_generic_audio(cls, path: str, stat_res: os.stat_result, ext: str) -> AudioMetadata:
-        """Fallback for other audio formats."""
         title = os.path.splitext(os.path.basename(path))[0]
         return AudioMetadata(
             file_path=path,
@@ -824,4 +910,145 @@ class MetadataExtractor:
             sample_rate_hz=None,
             channels=None,
             last_modified=datetime.datetime.fromtimestamp(stat_res.st_mtime).isoformat(),
+            mtime_timestamp=stat_res.st_mtime,
         )
+
+
+class VLCMetadataEnricher:
+    """
+    Leverages LibVLC's deep media parsing, fingerprinting, and artwork cache
+    to identify missing metadata and retrieve cover artwork.
+    """
+
+    _instance = None
+    _vlc_dll = None
+
+    @classmethod
+    def get_vlc_instance(cls):
+        """Singleton LibVLC instance for background parsing."""
+        if cls._instance is not None:
+            return cls._vlc_dll, cls._instance
+
+        search_dirs = [
+            r"C:\Program Files\VideoLAN\VLC",
+            r"C:\Program Files (x86)\VideoLAN\VLC",
+        ]
+        dll_path = None
+        for d in search_dirs:
+            cand = os.path.join(d, "libvlc.dll")
+            if os.path.isfile(cand):
+                dll_path = cand
+                if hasattr(os, "add_dll_directory"):
+                    try:
+                        os.add_dll_directory(d)
+                    except Exception:
+                        pass
+                os.environ["PATH"] = d + ";" + os.environ.get("PATH", "")
+                break
+
+        if not dll_path:
+            return None, None
+
+        try:
+            dll = ctypes.CDLL(dll_path)
+            dll.libvlc_new.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_char_p)]
+            dll.libvlc_new.restype = ctypes.c_void_p
+
+            dll.libvlc_media_new_path.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+            dll.libvlc_media_new_path.restype = ctypes.c_void_p
+
+            dll.libvlc_media_parse.argtypes = [ctypes.c_void_p]
+            dll.libvlc_media_parse.restype = None
+
+            dll.libvlc_media_get_meta.argtypes = [ctypes.c_void_p, ctypes.c_int]
+            dll.libvlc_media_get_meta.restype = ctypes.c_char_p
+
+            dll.libvlc_media_release.argtypes = [ctypes.c_void_p]
+            dll.libvlc_media_release.restype = None
+
+            inst = dll.libvlc_new(0, None)
+            cls._vlc_dll = dll
+            cls._instance = inst
+            return dll, inst
+        except Exception:
+            return None, None
+
+    @classmethod
+    def enrich(cls, meta: AudioMetadata) -> bool:
+        """
+        Parses the track with LibVLC to fill in missing metadata or locate artwork.
+        Returns True if any field was enriched.
+        """
+        dll, inst = cls.get_vlc_instance()
+        if not dll or not inst:
+            meta.vlc_fingerprinted = False
+            meta.vlc_status = "LibVLC unavailable"
+            return False
+
+        enriched = False
+        try:
+            path_bytes = os.path.abspath(meta.file_path).encode(sys.getfilesystemencoding())
+            media = dll.libvlc_media_new_path(inst, path_bytes)
+            if not media:
+                return False
+
+            dll.libvlc_media_parse(media)
+
+            def get_vlc_meta(meta_id: int) -> Optional[str]:
+                raw = dll.libvlc_media_get_meta(media, meta_id)
+                if raw:
+                    text = raw.decode("utf-8", errors="ignore").strip()
+                    return text if text else None
+                return None
+
+            vlc_title = get_vlc_meta(0)
+            vlc_artist = get_vlc_meta(1)
+            vlc_genre = get_vlc_meta(2)
+            vlc_album = get_vlc_meta(4)
+            vlc_date = get_vlc_meta(8)
+            vlc_art = get_vlc_meta(15)  # ArtworkURL
+
+            stem = os.path.splitext(meta.file_name)[0]
+
+            # Enrich Title
+            if ("title" in meta.missing_fields or meta.title == stem) and vlc_title and vlc_title != stem:
+                meta.title = vlc_title
+                enriched = True
+
+            # Enrich Artist
+            if ("artist" in meta.missing_fields or meta.artist.lower().startswith("unknown")) and vlc_artist:
+                meta.artist = vlc_artist
+                enriched = True
+
+            # Enrich Album
+            if ("album" in meta.missing_fields or meta.album.lower().startswith("unknown")) and vlc_album:
+                meta.album = vlc_album
+                enriched = True
+
+            # Enrich Genre
+            if (not meta.genre or meta.genre.lower().startswith("unknown")) and vlc_genre:
+                meta.genre = vlc_genre
+                enriched = True
+
+            # Enrich Year
+            if not meta.year and vlc_date:
+                meta.year = vlc_date[:4]
+                enriched = True
+
+            # Enrich Artwork
+            if not meta.has_album_art and vlc_art:
+                meta.has_album_art = True
+                meta.album_art_path = vlc_art
+                enriched = True
+
+            dll.libvlc_media_release(media)
+
+            meta.vlc_fingerprinted = True
+            meta.vlc_status = "VLC Enriched" if enriched else "VLC Parsed (No new tags)"
+            # Re-evaluate missing fields
+            MetadataExtractor.evaluate_completeness(meta)
+        except Exception as e:
+            meta.vlc_fingerprinted = False
+            meta.vlc_status = f"VLC Error: {e}"
+
+        return enriched
